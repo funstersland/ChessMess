@@ -1,0 +1,7 @@
+{
+  "title": "ChessMess",
+  "description": "Themed chess. Play bots, learn, coach.",
+  "type": "x:game",
+  "card": "custom",
+  "color": "4A1220"
+}
