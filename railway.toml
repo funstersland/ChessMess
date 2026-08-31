@@ -1,0 +1,17 @@
+# ChessMess on Railway — replaces the previous Next.js deploy at chessmess.online.
+# Required service variables (Railway dashboard → Variables, available at build + deploy):
+#   DATABASE_URL          — Postgres connection string (Railway plugin)
+#   BETTER_AUTH_SECRET    — random 32+ char secret for session signing
+#   BETTER_AUTH_URL       — https://chessmess.online
+#   VITE_AUTH_ENABLED     — true
+#   HOST                  — 0.0.0.0
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "NITRO_PRESET=node-server npm run build"
+
+[deploy]
+startCommand = "HOST=0.0.0.0 npm start"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
