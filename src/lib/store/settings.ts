@@ -32,8 +32,8 @@ export interface SettingsState {
 export const useSettings = create<SettingsState>()(
   persist(
     (set, get) => ({
-      theme: "royal",
-      boardStyle: "wood",
+      theme: "ivory",
+      boardStyle: "ivory",
       lockThemeAssets: true,
       showCoords: true,
       showCaptured: true,
