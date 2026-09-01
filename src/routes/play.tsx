@@ -23,7 +23,13 @@ function PlayPage() {
   const search = Route.useSearch();
   const vs = search.vs;
   const opponent: OpponentKind =
-    vs === "local" ? "local" : vs === "online" || search.room ? "online" : "bot";
+    vs === "local"
+      ? "local"
+      : vs === "coach"
+        ? "coach"
+        : vs === "online" || search.room
+          ? "online"
+          : "bot";
   const room = search.room ? search.room.replace(/\D/g, "").slice(0, 6) : undefined;
   const initial: Partial<MatchConfig> = {
     bot: (search.bot as BotId) || undefined,

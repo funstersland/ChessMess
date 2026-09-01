@@ -91,3 +91,35 @@ export function explainMistake(opts: {
     ? `A better try was ${opts.bestSan}.`
     : `There's a cleaner continuation.`;
 }
+
+/** Spoken guidance after each player move in coach mode. */
+export function coachMoveGuidance(opts: {
+  ply: number;
+  san: string;
+  inCheck: boolean;
+  classification?: string;
+  bestSan?: string;
+  cpLoss?: number;
+}): string {
+  if (opts.inCheck) return coachLine("check");
+  if (opts.classification === "blunder" || opts.classification === "mistake") {
+    return explainMistake({
+      san: opts.san,
+      bestSan: opts.bestSan,
+      classification: opts.classification,
+    });
+  }
+  if (opts.classification === "great" || (opts.cpLoss != null && opts.cpLoss < 20)) {
+    return `${coachLine("great")} ${opts.san} is on the mark.`;
+  }
+  if (opts.ply <= 14) {
+    return `${coachLine("opening")} You played ${opts.san}.`;
+  }
+  if (opts.ply >= 40) {
+    return `${coachLine("endgame")} ${opts.san} keeps the fight going.`;
+  }
+  if (opts.bestSan && opts.bestSan !== opts.san) {
+    return `${opts.san} is fine. I also like ${opts.bestSan}.`;
+  }
+  return `Good — ${opts.san}. Stay alert for the reply.`;
+}

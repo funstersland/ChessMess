@@ -152,6 +152,7 @@ export class StockfishClient {
       }
       const timer = window.setTimeout(() => {
         this.waiter = null;
+        this.recover("timeout");
         reject(new Error("Stockfish timeout"));
       }, ms);
       this.waiter = { pred, resolve, reject, timer };
@@ -215,6 +216,14 @@ export class StockfishClient {
     this.via = null;
   }
 
+  /** Reset a wedged worker so the next search boots clean. */
+  recover(_reason?: string) {
+    this.teardown();
+    this.ready = null;
+    this.failed = false;
+    this.chain = Promise.resolve();
+  }
+
   private async configureVariant(variant: VariantId) {
     const v = variant === "standard" || variant === "fromposition" ? "chess" : uciVariant(variant);
     this.send(`setoption name UCI_Variant value ${v}`);
@@ -235,24 +244,29 @@ export class StockfishClient {
 
   search(fen: string, variant: VariantId, opts: SearchOpts = {}): Promise<EnginePv[]> {
     const run = async (): Promise<EnginePv[]> => {
-      const ok = await this.ensure();
-      if (!ok || !this.worker) throw new Error("Stockfish failed to start");
-      const multipv = opts.multipv ?? 1;
-      this.send("ucinewgame");
-      await this.configureVariant(variant);
-      await this.configureStrength(opts.elo);
-      this.send(`setoption name MultiPV value ${multipv}`);
-      this.send("isready");
-      await this.wait((l) => l === "readyok", 4000);
-      this.send(`position fen ${fen}`);
-      const parts: string[] = ["go"];
-      if (opts.depth) parts.push(`depth ${opts.depth}`);
-      if (opts.movetime) parts.push(`movetime ${opts.movetime}`);
-      if (parts.length === 1) parts.push("movetime 380");
-      this.send(parts.join(" "));
-      const timeout = Math.max(6000, (opts.movetime ?? 380) + 4000);
-      const lines = await this.wait((l) => l.startsWith("bestmove"), timeout);
-      return parsePvs(lines, fen, variant);
+      try {
+        const ok = await this.ensure();
+        if (!ok || !this.worker) throw new Error("Stockfish failed to start");
+        const multipv = opts.multipv ?? 1;
+        this.send("ucinewgame");
+        await this.configureVariant(variant);
+        await this.configureStrength(opts.elo);
+        this.send(`setoption name MultiPV value ${multipv}`);
+        this.send("isready");
+        await this.wait((l) => l === "readyok", 4000);
+        this.send(`position fen ${fen}`);
+        const parts: string[] = ["go"];
+        if (opts.depth) parts.push(`depth ${opts.depth}`);
+        if (opts.movetime) parts.push(`movetime ${opts.movetime}`);
+        if (parts.length === 1) parts.push("movetime 380");
+        this.send(parts.join(" "));
+        const timeout = Math.max(6000, (opts.movetime ?? 380) + 4000);
+        const lines = await this.wait((l) => l.startsWith("bestmove"), timeout);
+        return parsePvs(lines, fen, variant);
+      } catch (err) {
+        this.recover(err instanceof Error ? err.message : "search failed");
+        throw err;
+      }
     };
     const next = this.chain.then(run, run);
     this.chain = next.catch(() => undefined);
@@ -271,16 +285,20 @@ export class StockfishClient {
   }
 }
 
-let singleton: StockfishClient | null = null;
+let moveSingleton: StockfishClient | null = null;
+let analysisSingleton: StockfishClient | null = null;
 
-export function getStockfish(): StockfishClient {
+export function getStockfish(kind: "move" | "analysis" = "analysis"): StockfishClient {
   if (typeof window === "undefined") {
     throw new Error("Stockfish is browser-only");
   }
-  singleton ??= new StockfishClient();
-  return singleton;
+  if (kind === "move") {
+    moveSingleton ??= new StockfishClient();
+    return moveSingleton;
+  }
+  analysisSingleton ??= new StockfishClient();
+  return analysisSingleton;
 }
-
 /** Map ladder rating label to Stockfish UCI_Elo. */
 export function botUciElo(rating: number): number {
   return clampElo(rating);
@@ -289,7 +307,7 @@ export function botUciElo(rating: number): number {
 export const engineClient = {
   async move(fen: string, variant: VariantId, strength: BotId) {
     const spec = botById(strength);
-    const pvs = await getStockfish().search(fen, variant, {
+    const pvs = await getStockfish("move").search(fen, variant, {
       elo: botUciElo(spec.rating),
       movetime: spec.movetimeMs,
       depth: spec.depth,
@@ -300,7 +318,7 @@ export const engineClient = {
   },
 
   async hint(fen: string, variant: VariantId) {
-    const pvs = await getStockfish().search(fen, variant, {
+    const pvs = await getStockfish("analysis").search(fen, variant, {
       depth: 14,
       movetime: 1800,
       multipv: 1,
@@ -311,7 +329,7 @@ export const engineClient = {
   },
 
   async score(fen: string, variant: VariantId, uci: string) {
-    const sf = getStockfish();
+    const sf = getStockfish("analysis");
     const bestPvs = await sf.search(fen, variant, { depth: 12, movetime: 1200, multipv: 1 });
     const best = bestPvs[0];
     if (!best) throw new Error("no score");
@@ -336,7 +354,7 @@ export const engineClient = {
   },
 
   async analyze(startFen: string, variant: VariantId, ucis: string[]) {
-    const sf = getStockfish();
+    const sf = getStockfish("analysis");
     const items: AnalyzeItem[] = [];
     let pos = loadPosition(variant, startFen);
     for (let i = 0; i < ucis.length; i++) {

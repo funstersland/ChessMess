@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Position } from "chessops/chess";
 import type { Role } from "chessops/types";
-import { Flag, FlipHorizontal2, Lightbulb, MessageCircle, RotateCcw, Shield } from "lucide-react";
+import { Flag, FlipHorizontal2, RotateCcw, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +39,7 @@ import type {
 } from "@/lib/chess/types";
 import { BOTS, botById, timeById, TIME_CONTROLS, VARIANTS, variantById } from "@/lib/chess/variants";
 import { playSfx, unlockAudio } from "@/lib/audio/sfx";
-import { coachLine, explainMistake, speak, stopSpeaking } from "@/lib/coach/coach";
+import { coachLine, coachMoveGuidance, speak, stopSpeaking } from "@/lib/coach/coach";
 import { useSettings } from "@/lib/store/settings";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
 import { applyGameResult } from "@/lib/server/profile";
@@ -198,6 +198,47 @@ export function PlayArena({
   const bot = botById(config.bot);
   const variant = variantById(config.variant);
   const time = timeById(config.time);
+  const isCoachMode = config.opponent === "coach";
+  const isBotMatch = config.opponent === "bot";
+  const isBotOpponent = isBotMatch || isCoachMode;
+
+  const speakCoach = useCallback(
+    (line: string) => {
+      setCoachText(line);
+      speak(line, {
+        gender: settings.coachVoice,
+        volume: settings.coachVol,
+        rate: settings.coachRate,
+        enabled: settings.sound,
+      });
+    },
+    [settings.coachRate, settings.coachVoice, settings.coachVol, settings.sound],
+  );
+
+  const guideCoachAfterMove = useCallback(
+    async (before: Position, played: { san: string; uci: string }, inCheck: boolean) => {
+      const ply = movesRef.current.length;
+      try {
+        const sc = await botClient.score(fenOf(before), config.variant, played.uci);
+        setEvalCp(before.turn === "white" ? sc.playedCp : -sc.playedCp);
+        const line = coachMoveGuidance({
+          ply,
+          san: played.san,
+          inCheck,
+          classification: sc.classification,
+          bestSan: sc.bestSan,
+          cpLoss: sc.cpLoss,
+        });
+        if (sc.classification === "blunder" || sc.classification === "mistake") {
+          toast[sc.classification === "blunder" ? "error" : "warning"](line);
+        }
+        speakCoach(line);
+      } catch {
+        speakCoach(coachMoveGuidance({ ply, san: played.san, inCheck }));
+      }
+    },
+    [config.variant, speakCoach],
+  );
 
   const refresh = useCallback((pos: Position) => {
     posRef.current = pos;
@@ -287,18 +328,13 @@ export function PlayArena({
       const youWin = winner === playerColor;
       const draw = winner === "draw";
       playSfx(draw ? "draw" : youWin ? "win" : "lose", settings.theme);
-      if (settings.coachOn && config.opponent !== "online") {
-        speak(coachLine(youWin ? "mate" : "lose"), {
-          gender: settings.coachVoice,
-          volume: settings.coachVol,
-          rate: settings.coachRate,
-          enabled: settings.sound,
-        });
+      if (isCoachMode) {
+        speakCoach(coachLine(youWin ? "mate" : draw ? "lose" : "lose"));
       }
 
       const sans = movesRef.current.map((m) => m.san);
       const oppName =
-        config.opponent === "bot"
+        isBotOpponent
           ? bot.name
           : config.opponent === "online"
             ? peerName || "Online friend"
@@ -332,7 +368,7 @@ export function PlayArena({
         setAnalyzing(false);
       }
 
-      if (config.opponent === "bot") {
+      if (isBotMatch) {
         const g = guestStats();
         const score = draw ? 0.5 : youWin ? 1 : 0;
         const games = g.wins + g.draws + g.losses;
@@ -488,8 +524,12 @@ export function PlayArena({
       config.opponent,
       config.time,
       config.variant,
+      isBotMatch,
+      isBotOpponent,
+      isCoachMode,
       playerColor,
       settings,
+      speakCoach,
       user,
       peerName,
       peerUserId,
@@ -509,60 +549,63 @@ export function PlayArena({
   );
 
   const requestBot = useCallback(async () => {
-    const pos = posRef.current;
-    setPhase("bot");
-    const thinkStart = performance.now();
-    try {
-      const res = await botClient.move(fenOf(pos), config.variant, config.bot);
-      await botThinkDelay(performance.now() - thinkStart);
-      if (phaseRef.current === "over") return;
-      const before = clonePos(pos);
-      const played = playUci(pos, res.uci);
-      if (!played) {
-        setPhase("player");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (posRef.current.turn === colorRef.current) return;
+      setPhase("bot");
+      const thinkStart = performance.now();
+      try {
+        const pos = posRef.current;
+        const res = await botClient.move(fenOf(pos), config.variant, config.bot);
+        await botThinkDelay(performance.now() - thinkStart);
+        if (phaseRef.current === "over") return;
+        const before = clonePos(pos);
+        const played = playUci(pos, res.uci);
+        if (!played) continue;
+        const s = snapshotOf(pos, config.variant);
+        const color: Side = before.turn;
+        setMoves((m) => {
+          const next = [
+            ...m,
+            {
+              uci: res.uci,
+              san: played.san,
+              fenBefore: fenOf(before),
+              fenAfter: s.fen,
+              color,
+              captured: played.captured as PlayedMove["captured"],
+            },
+          ];
+          movesRef.current = next;
+          return next;
+        });
+        const lm = lastMoveFromUci(res.uci, color);
+        setLastMoves((prev) => {
+          const next = prev.filter((x) => x.color !== color);
+          next.push(lm);
+          return next.slice(-2);
+        });
+        playSfx(
+          s.inCheck ? "check" : isDropUci(res.uci) ? "drop" : played.captured ? "capture" : "move",
+          settings.theme,
+        );
+        if (!isDropUci(res.uci) && played.captured && lm.from) {
+          triggerCaptureFx(before, lm.from, lm.to);
+          setShake(performance.now());
+        }
+        bumpClockAfterMove(color);
+        if (!isDropUci(res.uci) && lm.from) beginMoveSlide(lm.from, lm.to, pos);
+        refresh(pos);
+        const board = activeBoardStyle(settings.theme, settings.boardStyle, settings.lockThemeAssets);
+        await waitAfterBotMove(settings.animations, !!played.captured, board);
+        if (!applyOutcome(pos)) setPhase("player");
         return;
+      } catch {
+        /* retry with a fresh engine boot */
       }
-      const s = snapshotOf(pos, config.variant);
-      const color: Side = before.turn;
-      setMoves((m) => {
-        const next = [
-          ...m,
-          {
-            uci: res.uci,
-            san: played.san,
-            fenBefore: fenOf(before),
-            fenAfter: s.fen,
-            color,
-            captured: played.captured as PlayedMove["captured"],
-          },
-        ];
-        movesRef.current = next;
-        return next;
-      });
-      const lm = lastMoveFromUci(res.uci, color);
-      setLastMoves((prev) => {
-        const next = prev.filter((x) => x.color !== color);
-        next.push(lm);
-        return next.slice(-2);
-      });
-      playSfx(
-        s.inCheck ? "check" : isDropUci(res.uci) ? "drop" : played.captured ? "capture" : "move",
-        settings.theme,
-      );
-      if (!isDropUci(res.uci) && played.captured && lm.from) {
-        triggerCaptureFx(before, lm.from, lm.to);
-        setShake(performance.now());
-      }
-      bumpClockAfterMove(color);
-      if (!isDropUci(res.uci) && lm.from) beginMoveSlide(lm.from, lm.to, pos);
-      refresh(pos);
-      const board = activeBoardStyle(settings.theme, settings.boardStyle, settings.lockThemeAssets);
-      await waitAfterBotMove(settings.animations, !!played.captured, board);
-      if (!applyOutcome(pos)) setPhase("player");
-    } catch {
-      toast.error("The bot stalled. Your move.");
-      setPhase("player");
     }
+    toast.error("The bot stalled. Try takeback or start a new game.");
+    if (posRef.current.turn === colorRef.current) setPhase("player");
+    else setPhase("bot");
   }, [
     applyOutcome,
     beginMoveSlide,
@@ -627,51 +670,13 @@ export function PlayArena({
       beginMoveSlide(from, to, pos);
       refresh(pos);
 
-      if (settings.coachOn && config.opponent !== "online" && s.inCheck) {
-        const line = coachLine("check");
-        setCoachText(line);
-        speak(line, {
-          gender: settings.coachVoice,
-          volume: settings.coachVol,
-          rate: settings.coachRate,
-          enabled: settings.sound,
-        });
-      }
-
-      if (config.opponent === "bot" && settings.teachOnMistake && settings.coachOn) {
-        void botClient
-          .score(fenOf(before), config.variant, played.uci)
-          .then((sc) => {
-            setEvalCp(before.turn === "white" ? sc.playedCp : -sc.playedCp);
-            if (sc.classification === "mistake" || sc.classification === "blunder") {
-              const line = explainMistake({
-                san: played.san,
-                bestSan: sc.bestSan,
-                classification: sc.classification,
-              });
-              setCoachText(line);
-              speak(line, {
-                gender: settings.coachVoice,
-                volume: settings.coachVol,
-                rate: settings.coachRate,
-                enabled: settings.sound,
-              });
-              toast[sc.classification === "blunder" ? "error" : "warning"](line);
-            } else if (sc.classification === "great" && sc.cpLoss < 15) {
-              const line = coachLine("great");
-              setCoachText(line);
-            }
-          })
-          .catch(() => {});
-      }
-
       if (applyOutcome(pos)) return;
       if (config.opponent === "online") {
         sendRef.current({ type: "move", uci: played.uci });
         setPhase("player");
         return;
       }
-      if (config.opponent === "bot" && pos.turn !== colorRef.current) {
+      if (isBotOpponent && pos.turn !== colorRef.current) {
         void (async () => {
           const board = activeBoardStyle(
             settings.theme,
@@ -689,6 +694,10 @@ export function PlayArena({
       } else {
         setPhase("player");
       }
+
+      if (isCoachMode && color === playerColor) {
+        void guideCoachAfterMove(before, played, s.inCheck);
+      }
     },
     [
       applyOutcome,
@@ -696,6 +705,10 @@ export function PlayArena({
       config.opponent,
       config.variant,
       refresh,
+      guideCoachAfterMove,
+      isBotOpponent,
+      isCoachMode,
+      playerColor,
       requestBot,
       settings,
       triggerCaptureFx,
@@ -747,7 +760,7 @@ export function PlayArena({
         return true;
       }
 
-      if (!opts?.remote && config.opponent === "bot" && pos.turn !== colorRef.current) {
+      if (!opts?.remote && isBotOpponent && pos.turn !== colorRef.current) {
         void (async () => {
           const board = activeBoardStyle(
             settings.theme,
@@ -761,8 +774,14 @@ export function PlayArena({
         })();
       } else if (config.opponent === "local" && settings.autoFlip) {
         setOrientation(pos.turn);
+        if (!opts?.remote) setPhase("player");
+      } else if (!opts?.remote) {
+        setPhase("player");
       }
-      if (!opts?.remote) setPhase("player");
+
+      if (isCoachMode && color === playerColor) {
+        void guideCoachAfterMove(before, played, s.inCheck);
+      }
       return true;
     },
     [
@@ -770,6 +789,10 @@ export function PlayArena({
       config.opponent,
       config.variant,
       refresh,
+      guideCoachAfterMove,
+      isBotOpponent,
+      isCoachMode,
+      playerColor,
       requestBot,
       settings.animations,
       settings.autoFlip,
@@ -919,21 +942,15 @@ export function PlayArena({
     const ms = t.baseSec != null ? t.baseSec * 1000 : null;
     setClocks({ white: ms, black: ms });
     playSfx("start", settings.theme);
-    if (settings.coachOn && config.opponent !== "online") {
-      const line = coachLine("greeting");
-      setCoachText(line);
-      speak(line, {
-        gender: settings.coachVoice,
-        volume: settings.coachVol,
-        rate: settings.coachRate,
-        enabled: settings.sound,
-      });
+    if (isBotOpponent) void botClient.prewarm();
+    if (isCoachMode) {
+      speakCoach(coachLine("greeting"));
     } else {
       setCoachText(null);
     }
     if (config.opponent === "online") {
       setPhase("wait");
-    } else if (config.opponent === "bot" && pos.turn !== color) {
+    } else if (isBotOpponent && pos.turn !== color) {
       void requestBot();
     } else {
       setPhase("player");
@@ -1030,8 +1047,9 @@ export function PlayArena({
   const interactive =
     phase === "player" && myTurn && reviewPly == null && !snap.over;
 
-  const vsLabel =
-    config.opponent === "bot"
+  const vsLabel = isCoachMode
+    ? `Coach · vs ${bot.name}`
+    : isBotMatch
       ? `vs ${bot.name}`
       : config.opponent === "online"
         ? `Online · ${config.room ?? "room"}`
@@ -1088,7 +1106,7 @@ export function PlayArena({
           </div>
           <Badge tone={phase === "bot" ? "warn" : phase === "over" ? "accent" : phase === "wait" ? "warn" : "muted"}>
             {phase === "bot"
-              ? "Bot thinking"
+              ? `${bot.name} is thinking`
               : phase === "over"
                 ? "Game over"
                 : phase === "wait"
@@ -1169,7 +1187,7 @@ export function PlayArena({
         )}
 
         <div className="flex items-end gap-3">
-          {config.opponent === "bot" && (settings.hints || phase === "over") ? (
+          {isBotOpponent && (isCoachMode || phase === "over") ? (
             <div className="hidden h-[min(72vw,640px)] sm:block">
               <EvalBar cp={evalCp} orientation={orientation} />
             </div>
@@ -1179,7 +1197,7 @@ export function PlayArena({
               <div className="flex min-h-8 items-center justify-between gap-2">
                 <p className="text-sm text-muted">
                   {orientation === "white"
-                    ? config.opponent === "bot"
+                    ? isBotOpponent
                       ? bot.name
                       : "Black"
                     : "You"}
@@ -1244,7 +1262,7 @@ export function PlayArena({
               markLastMove={settings.markLastMove}
               highlightLegal={settings.highlightLegal}
               lastMoves={lastMoves}
-              hint={config.opponent === "bot" ? hint : null}
+              hint={isCoachMode ? hint : null}
               selected={selected}
               onSelect={setSelected}
               onMove={(f, t) => doMove(f, t)}
@@ -1263,7 +1281,7 @@ export function PlayArena({
                 <p className="text-sm text-muted">
                   {orientation === playerColor
                     ? "You"
-                    : config.opponent === "bot"
+                    : isBotOpponent
                       ? bot.name
                       : "White"}
                 </p>
@@ -1310,9 +1328,7 @@ export function PlayArena({
           </div>
         )}
 
-        {settings.coachOn && config.opponent !== "online" && (
-          <CoachBubble text={coachText} onMute={stopSpeaking} />
-        )}
+        {isCoachMode && <CoachBubble text={coachText} onMute={stopSpeaking} />}
       </div>
 
       <aside className="space-y-4">
@@ -1324,30 +1340,7 @@ export function PlayArena({
           >
             <FlipHorizontal2 className="size-4" /> Flip
           </Button>
-          {config.opponent === "bot" && (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={!settings.hints || phase !== "player"}
-              onClick={() => {
-                void botClient.hint(fenOf(posRef.current), config.variant).then((h) => {
-                  setHint({ from: h.uci.slice(0, 2), to: h.uci.slice(2, 4) });
-                  setEvalCp(h.eval);
-                  const line = coachLine("hint", h.san);
-                  setCoachText(line);
-                  speak(line, {
-                    gender: settings.coachVoice,
-                    volume: settings.coachVol,
-                    rate: settings.coachRate,
-                    enabled: settings.sound,
-                  });
-                });
-              }}
-            >
-              <Lightbulb className="size-4" /> Hint
-            </Button>
-          )}
-          {config.opponent === "bot" && (
+          {isBotOpponent && (
             <Button
               variant="secondary"
               size="sm"
@@ -1382,16 +1375,6 @@ export function PlayArena({
           >
             <Flag className="size-4" /> Resign
           </Button>
-          {config.opponent === "bot" && (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="col-span-2"
-              onClick={() => settings.set({ coachOn: !settings.coachOn })}
-            >
-              <MessageCircle className="size-4" /> Coach {settings.coachOn ? "on" : "off"}
-            </Button>
-          )}
         </div>
         <MoveList
           moves={moves}
@@ -1521,7 +1504,7 @@ export function PlayArena({
               >
                 New game
               </Button>
-              {config.opponent !== "bot" && (
+              {config.opponent === "online" && (
                 <Button
                   variant="danger"
                   disabled={reportBusy}
@@ -1638,14 +1621,15 @@ function Setup({
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-muted">Opponent</h2>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {(
             [
-              ["bot", "Play a bot"],
-              ["local", "Pass and play"],
-              ["online", "Online friend"],
+              ["bot", "Play a bot", "Rated match — no coach, takebacks allowed."],
+              ["coach", "Coach mode", "The coach guides every move you play."],
+              ["local", "Pass and play", "Two players, one screen."],
+              ["online", "Online friend", "Share a room code — casual, unrated."],
             ] as const
-          ).map(([id, label]) => (
+          ).map(([id, label, blurb]) => (
             <button
               key={id}
               type="button"
@@ -1665,13 +1649,16 @@ function Setup({
                 })
               }
               className={cn(
-                "h-12 rounded-[var(--radius-md)] border px-3 text-sm",
+                "rounded-[var(--radius-md)] border px-3 py-3 text-left",
                 config.opponent === id
                   ? "border-accent bg-accent text-accent-fg"
                   : "border-border bg-elevated text-fg",
               )}
             >
-              {label}
+              <div className="text-sm font-medium">{label}</div>
+              <p className={cn("mt-1 text-xs", config.opponent === id ? "text-accent-fg/80" : "text-subtle")}>
+                {blurb}
+              </p>
             </button>
           ))}
         </div>
@@ -1778,10 +1765,16 @@ function Setup({
         </section>
       )}
 
-      {config.opponent === "bot" && (
+      {(config.opponent === "bot" || config.opponent === "coach") && (
         <section className="space-y-3">
-          <h2 className="font-display text-xl text-fg">Bot ladder</h2>
-          <p className="text-sm text-muted">Pick a bot that matches your strength.</p>
+          <h2 className="font-display text-xl text-fg">
+            {config.opponent === "coach" ? "Sparring partner" : "Bot ladder"}
+          </h2>
+          <p className="text-sm text-muted">
+            {config.opponent === "coach"
+              ? "Pick an opponent strength. The coach comments on every move you make."
+              : "Pick a bot that matches your strength."}
+          </p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {BOTS.map((b) => {
               const on = config.bot === b.id;

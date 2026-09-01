@@ -68,7 +68,7 @@ export const applyGameResult = createServerFn({ method: "POST" })
       pgn: z.string(),
       fenStart: z.string(),
       analysis: z.array(z.any()).optional(),
-      opponentKind: z.enum(["bot", "local", "online"]).optional(),
+      opponentKind: z.enum(["bot", "coach", "local", "online"]).optional(),
       ucis: z.array(z.string()).optional(),
     }),
   )

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { BookOpen, Shield, Swords, Users } from "lucide-react";
+import { BookOpen, GraduationCap, Shield, Swords, Users } from "lucide-react";
 import { ChessMessMark } from "@/components/brand/ChessMessMark";
 import { Button } from "@/components/ui/button";
 import { VARIANTS } from "@/lib/chess/variants";
@@ -18,7 +18,7 @@ function Home() {
             A court for every climate.
           </h1>
           <p className="max-w-xl text-lg text-muted">
-            Play a bot that matches your strength. Keep a coach on your shoulder.
+            Play a bot that matches your strength. For move-by-move guidance, try Coach mode.
             Change the world — wood, ice, paper, royal — and the board, the pieces, and
             the sound change with it.
           </p>
@@ -26,6 +26,11 @@ function Home() {
             <Button asChild size="lg">
               <Link to="/play">
                 <Swords className="size-4" /> Play a bot
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="secondary">
+              <Link to="/play" search={{ vs: "coach" }}>
+                <GraduationCap className="size-4" /> Coach mode
               </Link>
             </Button>
             <Button asChild size="lg" variant="secondary">

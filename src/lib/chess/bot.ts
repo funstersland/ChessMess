@@ -1,8 +1,11 @@
 import type { AnalyzeItem, BotId, VariantId } from "./types";
-import { engineClient } from "./stockfish";
+import { getStockfish, engineClient } from "./stockfish";
 
 /** Stockfish-backed engine for bots, coach hints, and post-game analysis. */
 export const botClient = {
+  prewarm() {
+    return getStockfish("move").ensure();
+  },
   move(fen: string, variant: VariantId, strength: BotId) {
     return engineClient.move(fen, variant, strength);
   },

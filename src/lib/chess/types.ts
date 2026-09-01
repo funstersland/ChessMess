@@ -65,7 +65,7 @@ export type MoveClass =
   | "mistake"
   | "blunder";
 
-export type OpponentKind = "bot" | "local" | "online";
+export type OpponentKind = "bot" | "coach" | "local" | "online";
 
 export interface PieceOnSquare {
   square: SquareName;
