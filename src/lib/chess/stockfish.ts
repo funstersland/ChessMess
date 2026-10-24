@@ -412,12 +412,13 @@ async function playedFor(
 }
 
 export const engineClient = {
-  async move(fen: string, variant: VariantId, strength: BotId) {
+  async move(fen: string, variant: VariantId, strength: BotId, movetimeCapMs?: number) {
     const spec = botById(strength);
     const res = await getStockfish("move").search(fen, variant, {
       skill: spec.skill,
       depth: spec.depth,
-      movetime: spec.movetimeMs,
+      movetime:
+        movetimeCapMs == null ? spec.movetimeMs : Math.max(20, Math.min(spec.movetimeMs, Math.round(movetimeCapMs))),
     });
     const uci = res.bestmove ?? res.pvs[0]?.uci;
     if (!uci) throw new Error("no move");

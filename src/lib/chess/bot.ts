@@ -6,8 +6,9 @@ export const botClient = {
   prewarm() {
     return getStockfish("move").ensure();
   },
-  move(fen: string, variant: VariantId, strength: BotId) {
-    return engineClient.move(fen, variant, strength);
+  /** `movetimeCapMs` limits the search when the bot is on a clock. */
+  move(fen: string, variant: VariantId, strength: BotId, movetimeCapMs?: number) {
+    return engineClient.move(fen, variant, strength, movetimeCapMs);
   },
   hint(fen: string, variant: VariantId) {
     return engineClient.hint(fen, variant);

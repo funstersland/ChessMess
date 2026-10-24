@@ -42,9 +42,14 @@ export function captureFxDurationMs(board: BoardStyleId) {
   return boardHasCaptureFx(board) ? CAPTURE_FX_MS[board] : 0;
 }
 
-export async function botThinkDelay(elapsedMs: number) {
-  const target =
+/**
+ * Human-like pause before a bot move shows. `maxTotalMs` caps the whole think
+ * (engine + pause) when the bot is on a clock.
+ */
+export async function botThinkDelay(elapsedMs: number, maxTotalMs?: number) {
+  let target =
     BOT_THINK_MIN_MS + Math.random() * (BOT_THINK_MAX_MS - BOT_THINK_MIN_MS);
+  if (maxTotalMs != null) target = Math.min(target, maxTotalMs);
   if (elapsedMs < target) await sleep(target - elapsedMs);
 }
 

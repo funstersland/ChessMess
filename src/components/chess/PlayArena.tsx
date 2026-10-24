@@ -11,6 +11,7 @@ import {
   capturedFromStart,
   clonePos,
   downloadPgn,
+  drawByRule,
   fenOf,
   INITIAL_FEN,
   isDropUci,
@@ -21,7 +22,10 @@ import {
   playDrop,
   playFromTo,
   playUci,
+  repetitionKey,
+  repetitionKeyOfFen,
   snapshotOf,
+  timeoutResult,
   variantHasPockets,
 } from "@/lib/chess/engine";
 import { nextRating } from "@/lib/chess/rating";
@@ -42,7 +46,7 @@ import { playSfx, unlockAudio } from "@/lib/audio/sfx";
 import { coachLine, coachMoveGuidance, speak, stopSpeaking } from "@/lib/coach/coach";
 import { useSettings } from "@/lib/store/settings";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
-import { applyGameResult } from "@/lib/server/profile";
+import { applyGameResult, getMyProfile, saveGameAnalysis } from "@/lib/server/profile";
 import { getFairPlayMe, submitFairPlayScan } from "@/lib/server/fairplay";
 import { scanGame } from "@/lib/fairplay/scan";
 import { verdictLabel } from "@/lib/fairplay/score";
@@ -120,15 +124,20 @@ export function PlayArena({
     time: initial?.time ?? "none",
     fen: initial?.fen,
     onlineMode: initial?.onlineMode ?? (initial?.room ? "join" : "create"),
+    // A new room's code is random, so it is drawn after hydration (below);
+    // drawing it here would differ between the server and the browser.
     room:
       initial?.room != null
         ? normalizeRoomCode(initial.room)
         : initial?.opponent === "online"
-          ? (initial?.onlineMode ?? "create") === "join"
-            ? ""
-            : makeRoomCode()
+          ? ""
           : undefined,
   });
+  useEffect(() => {
+    if (config.opponent === "online" && config.onlineMode !== "join" && !config.room) {
+      setConfig((c) => (c.room ? c : { ...c, room: makeRoomCode() }));
+    }
+  }, [config.opponent, config.onlineMode, config.room]);
   const [started, setStarted] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [snap, setSnap] = useState<GameSnapshot>(() =>
@@ -169,6 +178,10 @@ export function PlayArena({
   const [peerUserId, setPeerUserId] = useState<string | undefined>();
   const [takebackWaiting, setTakebackWaiting] = useState(false);
   const [takebackRequest, setTakebackRequest] = useState(false);
+  const [drawOffered, setDrawOffered] = useState(false);
+  const [drawIncoming, setDrawIncoming] = useState(false);
+  /** How the game ended — drives the result title and the PGN result. */
+  const [outcome, setOutcome] = useState<{ winner: Side | "draw"; reason: string } | null>(null);
   const gameIdRef = useRef<string | null>(null);
 
   const posRef = useRef<Position>(loadPosition("standard"));
@@ -179,6 +192,8 @@ export function PlayArena({
   const lastTick = useRef(0);
   const endedRef = useRef(false);
   const movesRef = useRef<PlayedMove[]>([]);
+  /** Repetition key of every position so far (start included) for threefold. */
+  const keysRef = useRef<string[]>([]);
   /**
    * Bumped whenever the board is replaced (new game, rematch, leave, takeback).
    * Async bot work captures it first and drops its result if it changed, so a
@@ -189,9 +204,14 @@ export function PlayArena({
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+  // Signed in: the server's rating is the truth; refresh the local copy.
   useEffect(() => {
-    clocksRef.current = clocks;
-  }, [clocks]);
+    if (!user) return;
+    void getMyProfile()
+      .then((p) => saveGuest({ rating: p.rating, wins: p.wins, draws: p.draws, losses: p.losses }))
+      .catch(() => {});
+  }, [user]);
+
   useEffect(() => {
     if (!user) {
       setAccountStatus("ok");
@@ -288,13 +308,42 @@ export function PlayArena({
     return () => window.clearTimeout(t);
   }, [moveSlide]);
 
+  /** Append a move; the ref updates synchronously so game-end code sees it. */
+  const pushMove = useCallback((entry: PlayedMove) => {
+    const next = [...movesRef.current, entry];
+    movesRef.current = next;
+    keysRef.current = [...keysRef.current, repetitionKeyOfFen(entry.fenAfter)];
+    setMoves(next);
+  }, []);
+
+  const setClockValues = useCallback((next: { white: number | null; black: number | null }) => {
+    clocksRef.current = next;
+    setClocks(next);
+  }, []);
+
+  /** Online: the mover's own reading of their clock is authoritative. */
+  const syncClock = useCallback(
+    (side: Side, ms: number) => {
+      const c = clocksRef.current;
+      if (c[side] == null || !Number.isFinite(ms)) return;
+      setClockValues({ ...c, [side]: Math.max(0, ms) });
+    },
+    [setClockValues],
+  );
+
   const applyTakeback = useCallback(
     (plies: number) => {
+      // A finished game stays finished: no takebacks into a decided result.
+      if (endedRef.current || plies <= 0) return;
       gameSeqRef.current += 1;
       const keep = movesRef.current.slice(0, Math.max(0, movesRef.current.length - plies));
       const pos = loadPosition(config.variant, startFenRef.current);
       for (const m of keep) playUci(pos, m.uci);
       movesRef.current = keep;
+      keysRef.current = [
+        repetitionKeyOfFen(startFenRef.current),
+        ...keep.map((m) => repetitionKeyOfFen(m.fenAfter)),
+      ];
       setMoves(keep);
       setLastMoves(
         keep.slice(-2).map((m) => lastMoveFromUci(m.uci, m.color)),
@@ -311,29 +360,36 @@ export function PlayArena({
     [config.variant, refresh],
   );
 
-  function bumpClockAfterMove(mover: Side) {
-    const t = timeById(config.time);
-    setClocks((c) => {
-      if (c.white == null || c.black == null) return c;
+  /** Apply increment / per-move reset; returns the mover's time left (ms). */
+  const bumpClockAfterMove = useCallback(
+    (mover: Side): number | null => {
+      const t = timeById(config.time);
+      const c = clocksRef.current;
+      if (c.white == null || c.black == null) return null;
       const next = { ...c };
       if (t.perMove) {
         next[mover] = (t.baseSec ?? 0) * 1000;
       } else if (t.incSec) {
         next[mover] = (next[mover] ?? 0) + t.incSec * 1000;
       }
-      return next;
-    });
-  }
+      setClockValues(next);
+      return next[mover];
+    },
+    [config.time, setClockValues],
+  );
 
   const finish = useCallback(
-    async (winner: Side | "draw", reason: string) => {
+    async (winner: Side | "draw", reason: string, note?: string) => {
       if (endedRef.current) return;
       endedRef.current = true;
       const seq = gameSeqRef.current;
       const live = () => seq === gameSeqRef.current;
       setPhase("over");
       setShowResult(true);
-      setResultNote(reason);
+      setOutcome({ winner, reason });
+      setResultNote(note ?? reason);
+      setDrawOffered(false);
+      setDrawIncoming(false);
       stopSpeaking();
       const youWin = winner === playerColor;
       const draw = winner === "draw";
@@ -361,15 +417,55 @@ export function PlayArena({
       const gameId = uid();
       gameIdRef.current = gameId;
       const ucis = movesRef.current.map((m) => m.uci);
+      const result = draw ? "draw" : youWin ? "win" : "loss";
 
+      // 1) Record the result first, so closing the tab during the review
+      //    cannot dodge a rating change. Signed in: the server checks the
+      //    moves and computes the rating. Guest: rating lives on this device.
+      if (user) {
+        try {
+          const res = await applyGameResult({
+            data: {
+              id: gameId,
+              opponentKind: config.opponent,
+              botId: isBotOpponent ? config.bot : undefined,
+              opponent: oppName,
+              color: playerColor,
+              variant: config.variant,
+              timeControl: config.time,
+              result,
+              reason,
+              pgn,
+              fenStart: startFenRef.current,
+              ucis,
+            },
+          });
+          saveGuest(res.profile);
+          if (res.rated && live()) setRatingDelta(res.delta);
+        } catch (e) {
+          if (isBotMatch && live()) {
+            toast.error(e instanceof Error ? e.message : "Could not save this game.");
+          }
+        }
+      } else if (isBotMatch) {
+        const g = guestStats();
+        const score = draw ? 0.5 : youWin ? 1 : 0;
+        const games = g.wins + g.draws + g.losses;
+        const { next, delta } = nextRating(g.rating, bot.rating, score, games);
+        saveGuest({
+          rating: next,
+          wins: g.wins + (youWin ? 1 : 0),
+          draws: g.draws + (draw ? 1 : 0),
+          losses: g.losses + (!youWin && !draw ? 1 : 0),
+        });
+        if (live()) setRatingDelta(delta);
+      }
+
+      // 2) Move review.
       let analyzed: AnalyzeItem[] | undefined;
       setAnalyzing(true);
       try {
-        const res = await botClient.analyze(
-          startFenRef.current,
-          config.variant,
-          movesRef.current.map((m) => m.uci),
-        );
+        const res = await botClient.analyze(startFenRef.current, config.variant, ucis);
         analyzed = res.items;
         if (live()) setAnalysis(res.items);
       } catch {
@@ -377,69 +473,8 @@ export function PlayArena({
       } finally {
         if (live()) setAnalyzing(false);
       }
-
-      if (isBotMatch) {
-        const g = guestStats();
-        const score = draw ? 0.5 : youWin ? 1 : 0;
-        const games = g.wins + g.draws + g.losses;
-        const { next, delta } = nextRating(g.rating, bot.rating, score, games);
-        if (live()) setRatingDelta(delta);
-        const updated = {
-          rating: next,
-          wins: g.wins + (youWin ? 1 : 0),
-          draws: g.draws + (draw ? 1 : 0),
-          losses: g.losses + (!youWin && !draw ? 1 : 0),
-        };
-        saveGuest(updated);
-        if (user) {
-          try {
-            await applyGameResult({
-              data: {
-                id: gameId,
-                opponent: bot.name,
-                opponentRating: bot.rating,
-                color: playerColor,
-                variant: config.variant,
-                timeControl: config.time,
-                result: draw ? "draw" : youWin ? "win" : "loss",
-                rated: true,
-                ratingBefore: g.rating,
-                ratingAfter: next,
-                pgn,
-                fenStart: startFenRef.current,
-                analysis: analyzed,
-                opponentKind: "bot",
-                ucis,
-              },
-            });
-          } catch {
-            /* guest save still holds */
-          }
-        }
-      } else if (user) {
-        try {
-          await applyGameResult({
-            data: {
-              id: gameId,
-              opponent: oppName,
-              opponentRating: 1200,
-              color: playerColor,
-              variant: config.variant,
-              timeControl: config.time,
-              result: draw ? "draw" : youWin ? "win" : "loss",
-              rated: false,
-              ratingBefore: guestStats().rating,
-              ratingAfter: guestStats().rating,
-              pgn,
-              fenStart: startFenRef.current,
-              analysis: analyzed,
-              opponentKind: config.opponent,
-              ucis,
-            },
-          });
-        } catch {
-          /* ignore */
-        }
+      if (user && analyzed?.length) {
+        void saveGameAnalysis({ data: { id: gameId, analysis: analyzed } }).catch(() => {});
       }
 
       if (config.opponent !== "local" && ucis.length >= 8) {
@@ -525,7 +560,7 @@ export function PlayArena({
               },
             });
             if (res.caseId) {
-              toast.message("Opponent flagged for steward review.");
+              toast.message("Sent to the steward for review.");
             }
           }).catch(() => {});
         }
@@ -534,6 +569,7 @@ export function PlayArena({
     [
       bot.name,
       bot.rating,
+      config.bot,
       config.opponent,
       config.time,
       config.variant,
@@ -556,9 +592,33 @@ export function PlayArena({
         void finish(s.winner ?? "draw", s.reason ?? "game over");
         return true;
       }
+      const rule = drawByRule(pos, config.variant, keysRef.current);
+      if (rule) {
+        void finish("draw", rule);
+        return true;
+      }
       return false;
     },
     [config.variant, finish],
+  );
+
+  /** A clock reached zero. The other side wins unless it cannot ever mate. */
+  const onFlag = useCallback(
+    (flagged: Side, opts?: { remote?: boolean }) => {
+      if (endedRef.current) return;
+      const winner = timeoutResult(posRef.current, flagged);
+      if (config.opponent === "online" && !opts?.remote) {
+        sendRef.current({ type: "timeout", flagged });
+      }
+      void finish(
+        winner,
+        "on time",
+        winner === "draw"
+          ? `${flagged === "white" ? "White" : "Black"} ran out of time, but the other side cannot mate — draw.`
+          : `${flagged === "white" ? "White" : "Black"} ran out of time.`,
+      );
+    },
+    [config.opponent, finish],
   );
 
   const requestBot = useCallback(async () => {
@@ -572,8 +632,19 @@ export function PlayArena({
       try {
         const pos = posRef.current;
         const fen = fenOf(pos);
-        const res = await botClient.move(fen, config.variant, config.bot);
-        await botThinkDelay(performance.now() - thinkStart);
+        // With a clock, the bot spends at most a slice of its remaining time
+        // (search plus the human-like pause), so it no longer loses on time.
+        const botLeft = clocksRef.current[pos.turn];
+        const res = await botClient.move(
+          fen,
+          config.variant,
+          config.bot,
+          botLeft == null ? undefined : Math.max(40, botLeft / 40),
+        );
+        await botThinkDelay(
+          performance.now() - thinkStart,
+          botLeft == null ? undefined : Math.max(150, botLeft / 25),
+        );
         // Drop the reply if the game was replaced or the board moved on.
         if (stale() || pos !== posRef.current || fenOf(pos) !== fen) return;
         const before = clonePos(pos);
@@ -581,20 +652,13 @@ export function PlayArena({
         if (!played) continue;
         const s = snapshotOf(pos, config.variant);
         const color: Side = before.turn;
-        setMoves((m) => {
-          const next = [
-            ...m,
-            {
-              uci: res.uci,
-              san: played.san,
-              fenBefore: fenOf(before),
-              fenAfter: s.fen,
-              color,
-              captured: played.captured as PlayedMove["captured"],
-            },
-          ];
-          movesRef.current = next;
-          return next;
+        pushMove({
+          uci: res.uci,
+          san: played.san,
+          fenBefore: fenOf(before),
+          fenAfter: s.fen,
+          color,
+          captured: played.captured as PlayedMove["captured"],
         });
         const lm = lastMoveFromUci(res.uci, color);
         setLastMoves((prev) => {
@@ -615,7 +679,8 @@ export function PlayArena({
         refresh(pos);
         const board = activeBoardStyle(settings.theme, settings.boardStyle, settings.lockThemeAssets);
         await waitAfterBotMove(settings.animations, !!played.captured, board);
-        if (seq !== gameSeqRef.current) return;
+        // Nothing may reopen a game that ended (e.g. on time) during the pause.
+        if (seq !== gameSeqRef.current || endedRef.current) return;
         if (!applyOutcome(pos)) setPhase("player");
         return;
       } catch {
@@ -628,9 +693,11 @@ export function PlayArena({
     else setPhase("bot");
   }, [
     applyOutcome,
+    bumpClockAfterMove,
     beginMoveSlide,
     config.bot,
     config.variant,
+    pushMove,
     refresh,
     settings.boardStyle,
     settings.animations,
@@ -664,11 +731,7 @@ export function PlayArena({
         color,
         captured: played.captured as PlayedMove["captured"],
       };
-      setMoves((m) => {
-        const next = [...m, entry];
-        movesRef.current = next;
-        return next;
-      });
+      pushMove(entry);
       setLastMoves((prev) => {
         const next = prev.filter((x) => x.color !== color);
         next.push(lastMoveFromUci(played.uci, color));
@@ -686,16 +749,19 @@ export function PlayArena({
         triggerCaptureFx(before, from, to);
         setShake(performance.now());
       }
-      bumpClockAfterMove(color);
+      const left = bumpClockAfterMove(color);
       beginMoveSlide(from, to, pos);
       refresh(pos);
 
-      if (applyOutcome(pos)) return;
+      // Online: always send the move first — including a mating move — so
+      // the other board sees the end of the game too.
       if (config.opponent === "online") {
-        sendRef.current({ type: "move", uci: played.uci });
-        setPhase("player");
+        sendRef.current({ type: "move", uci: played.uci, clock: left ?? undefined });
+        setDrawOffered(false);
+        if (!applyOutcome(pos)) setPhase("player");
         return;
       }
+      if (applyOutcome(pos)) return;
       if (isBotOpponent && pos.turn !== colorRef.current) {
         const seq = gameSeqRef.current;
         void (async () => {
@@ -726,6 +792,7 @@ export function PlayArena({
     },
     [
       applyOutcome,
+      bumpClockAfterMove,
       beginMoveSlide,
       config.opponent,
       config.variant,
@@ -734,6 +801,7 @@ export function PlayArena({
       isBotOpponent,
       isCoachMode,
       playerColor,
+      pushMove,
       requestBot,
       settings,
       triggerCaptureFx,
@@ -741,8 +809,13 @@ export function PlayArena({
   );
 
   const performDrop = useCallback(
-    (role: Role, to: SquareName, opts?: { remote?: boolean }) => {
+    (role: Role, to: SquareName, opts?: { remote?: boolean; clock?: number }) => {
       const pos = posRef.current;
+      // Online: a remote drop is only valid on the peer's turn, a local one on ours.
+      if (config.opponent === "online") {
+        const ours = pos.turn === colorRef.current;
+        if (opts?.remote ? ours : !ours) return false;
+      }
       const before = clonePos(pos);
       const played = playDrop(pos, role, to);
       if (!played) {
@@ -751,19 +824,12 @@ export function PlayArena({
       }
       const color: Side = before.turn;
       const s = snapshotOf(pos, config.variant);
-      setMoves((m) => {
-        const next = [
-          ...m,
-          {
-            uci: played.uci,
-            san: played.san,
-            fenBefore: fenOf(before),
-            fenAfter: s.fen,
-            color,
-          },
-        ];
-        movesRef.current = next;
-        return next;
+      pushMove({
+        uci: played.uci,
+        san: played.san,
+        fenBefore: fenOf(before),
+        fenAfter: s.fen,
+        color,
       });
       setLastMoves((prev) => {
         const next = prev.filter((x) => x.color !== color);
@@ -774,16 +840,17 @@ export function PlayArena({
       setSelected(null);
       setHint(null);
       playSfx(s.inCheck ? "check" : "drop", settings.theme);
-      bumpClockAfterMove(color);
+      const left = bumpClockAfterMove(color);
+      if (opts?.remote && opts.clock != null) syncClock(color, opts.clock);
       refresh(pos);
 
-      if (applyOutcome(pos)) return true;
-
       if (!opts?.remote && config.opponent === "online") {
-        sendRef.current({ type: "drop", role, to });
-        setPhase("player");
+        sendRef.current({ type: "drop", role, to, clock: left ?? undefined });
+        setDrawOffered(false);
+        if (!applyOutcome(pos)) setPhase("player");
         return true;
       }
+      if (applyOutcome(pos)) return true;
 
       if (!opts?.remote && isBotOpponent && pos.turn !== colorRef.current) {
         const seq = gameSeqRef.current;
@@ -816,6 +883,7 @@ export function PlayArena({
     },
     [
       applyOutcome,
+      bumpClockAfterMove,
       config.opponent,
       config.variant,
       refresh,
@@ -823,7 +891,9 @@ export function PlayArena({
       isBotOpponent,
       isCoachMode,
       playerColor,
+      pushMove,
       requestBot,
+      syncClock,
       settings.animations,
       settings.autoFlip,
       settings.boardStyle,
@@ -833,28 +903,23 @@ export function PlayArena({
   );
 
   const applyRemote = useCallback(
-    (uci: string) => {
+    (uci: string, clock?: number) => {
       if (endedRef.current) return;
       const pos = posRef.current;
+      // Only accept the peer's move on the peer's turn.
+      if (pos.turn === colorRef.current) return;
       const before = clonePos(pos);
       const played = playUci(pos, uci);
       if (!played) return;
       const s = snapshotOf(pos, config.variant);
       const color: Side = before.turn;
-      setMoves((m) => {
-        const next = [
-          ...m,
-          {
-            uci,
-            san: played.san,
-            fenBefore: fenOf(before),
-            fenAfter: s.fen,
-            color,
-            captured: played.captured as PlayedMove["captured"],
-          },
-        ];
-        movesRef.current = next;
-        return next;
+      pushMove({
+        uci,
+        san: played.san,
+        fenBefore: fenOf(before),
+        fenAfter: s.fen,
+        color,
+        captured: played.captured as PlayedMove["captured"],
       });
       const lm = lastMoveFromUci(uci, color);
       setLastMoves((prev) => {
@@ -871,17 +936,20 @@ export function PlayArena({
         setShake(performance.now());
       }
       bumpClockAfterMove(color);
+      if (clock != null) syncClock(color, clock);
       if (!isDropUci(uci) && lm.from) beginMoveSlide(lm.from, lm.to, pos);
       refresh(pos);
+      setDrawIncoming(false);
       if (!applyOutcome(pos)) setPhase("player");
     },
-    [applyOutcome, beginMoveSlide, config.variant, refresh, settings.theme, triggerCaptureFx],
+    [applyOutcome, beginMoveSlide, bumpClockAfterMove, config.variant, pushMove, refresh, settings.theme, syncClock, triggerCaptureFx],
   );
 
   const applyRemoteDrop = useCallback(
-    (role: string, to: string) => {
+    (role: string, to: string, clock?: number) => {
       if (endedRef.current) return;
-      performDrop(role as Role, to as SquareName, { remote: true });
+      setDrawIncoming(false);
+      performDrop(role as Role, to as SquareName, { remote: true, clock });
     },
     [performDrop],
   );
@@ -889,6 +957,8 @@ export function PlayArena({
   const onFriendHello = useCallback(
     (msg: FriendHello) => {
       if (host) return;
+      // The host repeats its hello until we acknowledge; set up only once.
+      if (movesRef.current.length > 0 || endedRef.current) return;
       const color: Side = msg.hostColor === "white" ? "black" : "white";
       colorRef.current = color;
       setPlayerColor(color);
@@ -905,11 +975,61 @@ export function PlayArena({
       const pos = loadPosition(msg.variant, msg.fen);
       startFenRef.current = fenOf(pos);
       posRef.current = pos;
+      keysRef.current = [repetitionKey(pos)];
       setSnap(snapshotOf(pos, msg.variant));
+      // The guest plays the host's time control, so start the same clocks.
+      const t = timeById(msg.time);
+      const ms = t.baseSec != null ? t.baseSec * 1000 : null;
+      setClockValues({ white: ms, black: ms });
       setPhase("player");
     },
-    [host],
+    [host, setClockValues],
   );
+
+  const onRemoteTimeout = useCallback((flagged: Side) => onFlag(flagged, { remote: true }), [onFlag]);
+
+  const onRoomRejected = useCallback(
+    (reason: "room_full" | "forbidden") => {
+      toast.error(
+        reason === "room_full"
+          ? "That room already has two players. Check the code or start a new room."
+          : "Online play is not available for this account.",
+      );
+      gameSeqRef.current += 1;
+      setStarted(false);
+      setPhase("idle");
+      onExit?.();
+    },
+    [onExit],
+  );
+
+  const onDrawOffer = useCallback(() => {
+    if (endedRef.current) return;
+    setDrawIncoming(true);
+    toast.message(`${peerName} offers a draw`);
+  }, [peerName]);
+
+  const onDrawAccept = useCallback(() => {
+    if (!endedRef.current) void finish("draw", "agreement", "Draw agreed.");
+  }, [finish]);
+
+  const onDrawDecline = useCallback(() => {
+    setDrawOffered(false);
+    toast.message(`${peerName} declined the draw`);
+  }, [peerName]);
+
+  /**
+   * Bot games: undo back to before your last move. Handles you playing Black
+   * (where the game starts with the bot's move) and a bot reply that has not
+   * arrived yet; never undoes past your first move.
+   */
+  const takebackVsBot = useCallback(() => {
+    const list = movesRef.current;
+    let k = list.length;
+    while (k > 0 && list[k - 1]!.color !== colorRef.current) k--;
+    if (k === 0) return;
+    applyTakeback(list.length - (k - 1));
+  }, [applyTakeback]);
 
   const onTakebackRequest = useCallback(() => {
     setTakebackRequest(true);
@@ -954,9 +1074,14 @@ export function PlayArena({
     );
     startFenRef.current = fenOf(pos);
     posRef.current = pos;
+    keysRef.current = [repetitionKey(pos)];
     setSnap(snapshotOf(pos, config.variant));
     setMoves([]);
     movesRef.current = [];
+    setOutcome(null);
+    setDrawOffered(false);
+    setDrawIncoming(false);
+    setShowResult(false);
     setLastMoves([]);
     setAnalysis(null);
     setResultNote(null);
@@ -971,7 +1096,7 @@ export function PlayArena({
     setStarted(true);
     const t = timeById(config.time);
     const ms = t.baseSec != null ? t.baseSec * 1000 : null;
-    setClocks({ white: ms, black: ms });
+    setClockValues({ white: ms, black: ms });
     playSfx("start", settings.theme);
     if (isBotOpponent) void botClient.prewarm();
     if (isCoachMode) {
@@ -1004,8 +1129,10 @@ export function PlayArena({
     if (peerOn && phase === "wait") setPhase("player");
   }, [peerOn, phase, config.opponent]);
 
+  const isOver = phase === "over";
+  const isWaiting = phase === "wait";
   useEffect(() => {
-    if (!started || phase === "over" || phase === "wait") return;
+    if (!started || isOver || isWaiting) return;
     if (time.baseSec == null) return;
     lastTick.current = performance.now();
     let raf = 0;
@@ -1014,17 +1141,16 @@ export function PlayArena({
       if (!alive) return;
       const dt = Math.min(250, now - lastTick.current);
       lastTick.current = now;
-      if (!endedRef.current) {
-        const turn = posRef.current.turn;
-        setClocks((c) => {
-          if (c.white == null || c.black == null) return c;
-          const next = { ...c };
-          next[turn] = Math.max(0, (next[turn] ?? 0) - dt);
-          if (next[turn] <= 0 && !endedRef.current) {
-            void finish(turn === "white" ? "black" : "white", "on time");
-          }
-          return next;
-        });
+      const turn = posRef.current.turn;
+      // After a bot move the board stays locked for its animation; the
+      // player's clock only starts once they can actually move.
+      const lockedForPlayer = phaseRef.current === "bot" && turn === colorRef.current;
+      const c = clocksRef.current;
+      if (!endedRef.current && !lockedForPlayer && c.white != null && c.black != null) {
+        const next = { ...c, [turn]: Math.max(0, (c[turn] ?? 0) - dt) };
+        clocksRef.current = next;
+        setClocks(next);
+        if (next[turn] === 0) onFlag(turn);
       }
       raf = requestAnimationFrame(loop);
     };
@@ -1033,7 +1159,7 @@ export function PlayArena({
       alive = false;
       cancelAnimationFrame(raf);
     };
-  }, [started, phase === "over", time.baseSec, finish, phase]);
+  }, [started, isOver, isWaiting, time.baseSec, onFlag]);
 
   const mat = useMemo(() => materialCount(posRef.current), [snap.fen]);
   const captured = useMemo(
@@ -1086,6 +1212,38 @@ export function PlayArena({
         ? `Online · ${config.room ?? "room"}`
         : "Pass and play";
 
+  const opponentName = isBotOpponent
+    ? bot.name
+    : config.opponent === "online"
+      ? peerName || "Online friend"
+      : config.opponent === "local"
+        ? (playerColor === "white" ? "Black" : "White")
+        : "Opponent";
+  const pgnResult = !outcome
+    ? "*"
+    : outcome.winner === "draw"
+      ? "1/2-1/2"
+      : outcome.winner === "white"
+        ? "1-0"
+        : "0-1";
+  const resultTitle = !outcome
+    ? "Game over"
+    : outcome.winner === "draw"
+      ? "Draw"
+      : config.opponent === "local"
+        ? `${outcome.winner === "white" ? "White" : "Black"} wins`
+        : outcome.winner === playerColor
+          ? "You win"
+          : outcome.reason === "resignation"
+            ? "Resigned"
+            : "Defeat";
+  const canTakebackVsBot =
+    phase === "player" && moves.some((m) => m.color === playerColor);
+  const canOfferDraw =
+    (config.opponent === "online" || config.opponent === "local") &&
+    phase === "player" &&
+    moves.length >= 2 &&
+    !drawOffered;
   const lastMove = moves[moves.length - 1];
   const canRequestTakebackOnline =
     config.opponent === "online" &&
@@ -1118,7 +1276,12 @@ export function PlayArena({
           onIdentity={onFriendIdentity}
           onMove={applyRemote}
           onDrop={applyRemoteDrop}
-          onResign={() => void finish(playerColor, "resignation")}
+          onResign={() => void finish(playerColor, "resignation", `${peerName} resigned.`)}
+          onTimeout={onRemoteTimeout}
+          onDrawOffer={onDrawOffer}
+          onDrawAccept={onDrawAccept}
+          onDrawDecline={onDrawDecline}
+          onRejected={onRoomRejected}
           onTakebackRequest={onTakebackRequest}
           onTakebackAccept={onTakebackAccept}
           onTakebackDecline={onTakebackDecline}
@@ -1176,6 +1339,34 @@ export function PlayArena({
                 }}
               >
                 Copy invite link
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {drawIncoming && config.opponent === "online" && phase !== "over" && (
+          <div className="rounded-[var(--radius-md)] border border-accent/40 bg-accent/10 p-4 text-sm">
+            <p className="font-medium text-fg">{peerName} offers a draw.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  sendRef.current({ type: "draw_accept" });
+                  setDrawIncoming(false);
+                  void finish("draw", "agreement", "Draw agreed.");
+                }}
+              >
+                Accept draw
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  sendRef.current({ type: "draw_decline" });
+                  setDrawIncoming(false);
+                }}
+              >
+                Decline
               </Button>
             </div>
           </div>
@@ -1375,8 +1566,8 @@ export function PlayArena({
             <Button
               variant="secondary"
               size="sm"
-              disabled={moves.length === 0 || phase === "bot"}
-              onClick={() => applyTakeback(2)}
+              disabled={!canTakebackVsBot}
+              onClick={takebackVsBot}
             >
               <RotateCcw className="size-4" /> Takeback
             </Button>
@@ -1400,12 +1591,36 @@ export function PlayArena({
             size="sm"
             onClick={() => {
               if (config.opponent === "online") sendRef.current({ type: "resign" });
-              void finish(playerColor === "white" ? "black" : "white", "resignation");
+              // Pass and play: the side to move resigns.
+              const loser: Side = config.opponent === "local" ? posRef.current.turn : playerColor;
+              void finish(
+                loser === "white" ? "black" : "white",
+                "resignation",
+                `${config.opponent === "local" ? (loser === "white" ? "White" : "Black") : "You"} resigned.`,
+              );
             }}
             disabled={phase === "over" || phase === "wait"}
           >
             <Flag className="size-4" /> Resign
           </Button>
+          {(config.opponent === "online" || config.opponent === "local") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!canOfferDraw}
+              onClick={() => {
+                if (config.opponent === "local") {
+                  void finish("draw", "agreement", "Draw agreed.");
+                  return;
+                }
+                sendRef.current({ type: "draw_offer" });
+                setDrawOffered(true);
+                toast.message("Draw offered");
+              }}
+            >
+              {config.opponent === "local" ? "Agree draw" : drawOffered ? "Draw offered" : "Offer draw"}
+            </Button>
+          )}
           <AppearanceButton className="col-span-2" />
         </div>
         <MoveList
@@ -1431,15 +1646,7 @@ export function PlayArena({
       {phase === "over" && showResult && (
         <div className="fixed inset-0 z-40 grid place-items-center bg-bg/70 p-4">
           <div className="w-full max-w-lg space-y-4 rounded-[var(--radius-xl)] border border-border bg-surface p-6">
-            <h2 className="font-display text-2xl text-fg">
-              {resultNote === "resignation"
-                ? "Resigned"
-                : snap.winner === "draw"
-                  ? "Draw"
-                  : snap.winner === playerColor
-                    ? "You win"
-                    : "Defeat"}
-            </h2>
+            <h2 className="font-display text-2xl text-fg">{resultTitle}</h2>
             <p className="text-sm text-muted">{resultNote}</p>
             {ratingDelta != null && (
               <p className="font-display text-xl tabular-nums">
@@ -1512,11 +1719,10 @@ export function PlayArena({
                 onClick={() =>
                   downloadPgn(
                     buildPgn({
-                      white: playerColor === "white" ? "You" : bot.name,
-                      black: playerColor === "black" ? "You" : bot.name,
+                      white: playerColor === "white" ? "You" : opponentName,
+                      black: playerColor === "black" ? "You" : opponentName,
                       variant: config.variant,
-                      result:
-                        snap.winner === "draw" ? "1/2-1/2" : snap.winner === "white" ? "1-0" : "0-1",
+                      result: pgnResult,
                       fen: startFenRef.current,
                       sans: moves.map((m) => m.san),
                       timeControl: config.time,
@@ -1558,8 +1764,7 @@ export function PlayArena({
                       white: playerColor === "white" ? (user.displayName ?? "You") : peerName,
                       black: playerColor === "black" ? (user.displayName ?? "You") : peerName,
                       variant: config.variant,
-                      result:
-                        snap.winner === "draw" ? "1/2-1/2" : snap.winner === "white" ? "1-0" : "0-1",
+                      result: pgnResult,
                       fen: startFenRef.current,
                       sans: movesRef.current.map((m) => m.san),
                       timeControl: config.time,

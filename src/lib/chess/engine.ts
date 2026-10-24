@@ -3,7 +3,6 @@ import { normalizeMove, type Position } from "chessops/chess";
 import { makeFen, parseFen } from "chessops/fen";
 import { makeSan, parseSan } from "chessops/san";
 import {
-  isDrop,
   isNormal,
   ROLES,
   type Color,
@@ -167,6 +166,43 @@ export function snapshotOf(
     canCastle: pos.castles.castlingRights.nonEmpty(),
     fullmoves: pos.fullmoves,
   };
+}
+
+/**
+ * Key for threefold repetition: the FEN without the move counters, so it
+ * still includes side to move, castling rights, a legal en passant square,
+ * crazyhouse pockets and three-check counts.
+ */
+export function repetitionKey(pos: Position): string {
+  return repetitionKeyOfFen(fenOf(pos));
+}
+
+export function repetitionKeyOfFen(fen: string): string {
+  const parts = fen.trim().split(/\s+/);
+  return parts.slice(0, Math.max(1, parts.length - 2)).join(" ");
+}
+
+export type RuleDraw = "threefold repetition" | "fifty-move rule";
+
+/**
+ * Automatic draws the board alone cannot see. `keys` is the repetition key of
+ * every position so far, start position included, latest last.
+ */
+export function drawByRule(pos: Position, variant: VariantId, keys: string[]): RuleDraw | null {
+  // Drops reset nothing in crazyhouse, so the fifty-move rule is not used there.
+  if (variant !== "crazyhouse" && pos.halfmoves >= 100) return "fifty-move rule";
+  const last = keys[keys.length - 1];
+  if (last && keys.filter((k) => k === last).length >= 3) return "threefold repetition";
+  return null;
+}
+
+/**
+ * Result of a flag fall: the side with time left wins unless it has no way to
+ * ever deliver mate, in which case the game is drawn (FIDE 6.9).
+ */
+export function timeoutResult(pos: Position, flagged: Side): Side | "draw" {
+  const other: Side = flagged === "white" ? "black" : "white";
+  return pos.hasInsufficientMaterial(other) ? "draw" : other;
 }
 
 export function generateMoves(pos: Position): Move[] {
