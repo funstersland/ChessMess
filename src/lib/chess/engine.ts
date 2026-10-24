@@ -269,6 +269,27 @@ export function playDrop(
   return { uci, san };
 }
 
+/**
+ * True when from→to in `pos` is one of the `expected` moves. Both sides are
+ * normalised first, so castling counts whether the king is dragged two
+ * squares (e1g1) or onto its rook (e1h1). Call before playing the move.
+ */
+export function matchesMove(
+  pos: Position,
+  from: SquareName,
+  to: SquareName,
+  expected: { from: SquareName; to: SquareName }[],
+): boolean {
+  const key = (f: SquareName, t: SquareName) => {
+    const fs = parseSquare(f);
+    const ts = parseSquare(t);
+    if (fs == null || ts == null) return null;
+    return makeUci(normalizeMove(pos, { from: fs, to: ts }));
+  };
+  const played = key(from, to);
+  return played != null && expected.some((e) => key(e.from, e.to) === played);
+}
+
 export function trySan(pos: Position, san: string): Move | undefined {
   return parseSan(pos, san);
 }

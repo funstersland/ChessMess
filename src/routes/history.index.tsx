@@ -7,7 +7,7 @@ import { downloadPgn } from "@/lib/chess/engine";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-export const Route = createFileRoute("/history")({ component: HistoryPage });
+export const Route = createFileRoute("/history/")({ component: HistoryPage });
 
 function HistoryPage() {
   const { user, isPending } = useCurrentUserState();
@@ -58,6 +58,11 @@ function HistoryPage() {
               onClick={() => downloadPgn(g.pgn, `chessmess-${g.id.slice(0, 8)}.pgn`)}
             >
               PGN
+            </Button>
+            <Button asChild size="sm">
+              <Link to="/history/$id" params={{ id: g.id }}>
+                Review
+              </Link>
             </Button>
             <Button asChild variant="secondary" size="sm">
               <Link to="/fair-play" search={{ game: g.id }}>

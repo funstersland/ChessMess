@@ -1,10 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { Check } from "lucide-react";
 import { LESSONS } from "@/lib/learn/lessons";
+import { isLessonDone } from "@/lib/learn/progress";
 
-export const Route = createFileRoute("/learn")({ component: LearnIndex });
+export const Route = createFileRoute("/learn/")({ component: LearnIndex });
 
 function LearnIndex() {
   const chapters = [...new Set(LESSONS.map((l) => l.chapter))];
+  // Progress lives in this browser; read it after hydration.
+  const [done, setDone] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setDone(new Set(LESSONS.filter((l) => isLessonDone(l.id)).map((l) => l.id)));
+  }, []);
   return (
     <div className="space-y-8">
       <div>
@@ -26,7 +34,10 @@ function LearnIndex() {
                 className="rounded-[var(--radius-lg)] border border-border bg-surface p-4 hover:bg-elevated"
               >
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium">{l.title}</span>
+                  <span className="flex items-center gap-1.5 font-medium">
+                    {l.title}
+                    {done.has(l.id) && <Check className="size-4 text-good" aria-label="Completed" />}
+                  </span>
                   <span className="text-xs text-subtle">{l.minutes} min</span>
                 </div>
                 <p className="mt-1 text-sm text-muted">{l.steps[0]?.body.slice(0, 90)}…</p>

@@ -11,7 +11,11 @@ export interface Puzzle {
   hint: string;
 }
 
-/** Positions verified for a single correct solution. */
+/**
+ * Every position is legal and checked: mate puzzles accept any mate in one,
+ * "exact" puzzles have exactly one winning move (the opposition puzzle was
+ * verified with a king-and-pawn tablebase and Stockfish).
+ */
 export const PUZZLES: Puzzle[] = [
   {
     id: "back-rank",
@@ -25,23 +29,23 @@ export const PUZZLES: Puzzle[] = [
   },
   {
     id: "queen-mate",
-    title: "Queen mate",
+    title: "Queen and king mate",
     theme: "Checkmate",
     rating: 650,
-    fen: "6k1/5ppp/8/8/8/8/5PPP/6Q1 w - - 0 1",
+    fen: "7k/8/6K1/8/8/8/8/1Q6 w - - 0 1",
     goal: "mate",
-    expect: [{ from: "g1", to: "g7" }],
-    hint: "Deliver mate on the g-file.",
+    expect: [{ from: "b1", to: "b8" }],
+    hint: "Your king already covers g7 and h7. Bring the queen to the back rank with check.",
   },
   {
     id: "rook-lift",
     title: "Rook lift mate",
     theme: "Checkmate",
     rating: 750,
-    fen: "6k1/5Rpp/8/8/8/8/5PPP/6K1 w - - 0 1",
+    fen: "7k/6p1/5p2/8/2B5/R7/5PPP/6K1 w - - 0 1",
     goal: "mate",
-    expect: [{ from: "f7", to: "f8" }],
-    hint: "Slide the rook to the eighth rank.",
+    expect: [{ from: "a3", to: "h3" }],
+    hint: "The bishop guards g8. Swing the rook along the third rank to the open h-file.",
   },
   {
     id: "scholar",
@@ -55,13 +59,13 @@ export const PUZZLES: Puzzle[] = [
   },
   {
     id: "opposition",
-    title: "King opposition",
+    title: "Take the opposition",
     theme: "Endgame",
     rating: 800,
-    fen: "8/8/8/8/8/4K3/8/4P3 w - - 0 1",
+    fen: "8/8/8/4k3/8/8/3KP3/8 w - - 0 1",
     goal: "exact",
-    expect: [{ from: "e3", to: "e4" }],
-    hint: "Seize the opposition before the pawn advances.",
+    expect: [{ from: "d2", to: "e3" }],
+    hint: "Step in front of your pawn so the kings face each other with one square between. Only one move wins.",
   },
 ];
 
@@ -69,4 +73,14 @@ export function puzzleById(id: string) {
   return PUZZLES.find((p) => p.id === id);
 }
 
-export const DAILY_PUZZLE = PUZZLES[new Date().getDate() % PUZZLES.length]!;
+/** Today's puzzle; keyed on the UTC day so server and browser agree. */
+export function dailyPuzzle(now: number = Date.now()): Puzzle {
+  const day = Math.floor(now / 86_400_000);
+  return PUZZLES[day % PUZZLES.length]!;
+}
+
+/** Puzzle after `id`, wrapping around. */
+export function nextPuzzle(id: string): Puzzle {
+  const i = PUZZLES.findIndex((p) => p.id === id);
+  return PUZZLES[(i + 1) % PUZZLES.length]!;
+}

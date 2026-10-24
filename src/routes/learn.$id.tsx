@@ -1,54 +1,99 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Position } from "chessops/chess";
+import { Check, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChessBoard } from "@/components/chess/ChessBoard";
 import { CoachBubble } from "@/components/chess/CoachBubble";
 import {
   isPromotionMove,
+  lastMoveFromUci,
   loadPosition,
+  matchesMove,
   playFromTo,
   snapshotOf,
 } from "@/lib/chess/engine";
-import { LESSONS, lessonById } from "@/lib/learn/lessons";
+import { LESSONS, lessonById, type LessonStep } from "@/lib/learn/lessons";
+import { markLessonDone } from "@/lib/learn/progress";
 import { speak } from "@/lib/coach/coach";
 import { useSettings } from "@/lib/store/settings";
 import { playSfx } from "@/lib/audio/sfx";
-import type { GameSnapshot, SquareName } from "@/lib/chess/types";
+import type { GameSnapshot, LastMove, SquareName } from "@/lib/chess/types";
 
-export const Route = createFileRoute("/learn/$id")({ component: LessonPage });
+export const Route = createFileRoute("/learn/$id")({ component: LessonRoute });
 
-function LessonPage() {
+/** Remount per lesson so "Next lesson" always starts fresh at step 1. */
+function LessonRoute() {
   const { id } = Route.useParams();
+  return <LessonPage key={id} id={id} />;
+}
+
+/** How long a wrong move stays on the board before it is taken back. */
+const WRONG_MOVE_MS = 900;
+
+function snapOf(step: LessonStep | undefined) {
+  return step ? snapshotOf(loadPosition("standard", step.fen), "standard") : null;
+}
+
+function LessonPage({ id }: { id: string }) {
   const nav = useNavigate();
   const lesson = lessonById(id);
   const settings = useSettings();
   const [step, setStep] = useState(0);
-  const [selected, setSelected] = useState<SquareName | null>(null);
-  const [snap, setSnap] = useState<GameSnapshot | null>(null);
-  const [done, setDone] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const posRef = useRef<Position | null>(null);
-
   const current = lesson?.steps[step];
+  const [selected, setSelected] = useState<SquareName | null>(null);
+  const [snap, setSnap] = useState<GameSnapshot | null>(() => snapOf(current));
+  const [lastMoves, setLastMoves] = useState<LastMove[]>([]);
+  const [done, setDone] = useState(current?.goal === "observe");
+  const [locked, setLocked] = useState(false);
+  const [msg, setMsg] = useState<string | null>(current?.coach ?? null);
+  const posRef = useRef<Position | null>(null);
+  const undoTimer = useRef<number | null>(null);
+
   const idx = LESSONS.findIndex((l) => l.id === id);
   const nextLesson = idx >= 0 ? LESSONS[idx + 1] : undefined;
 
+  const clearUndo = useCallback(() => {
+    if (undoTimer.current != null) window.clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+  }, []);
+
+  const resetBoard = useCallback(
+    (message?: string) => {
+      if (!current) return;
+      clearUndo();
+      const pos = loadPosition("standard", current.fen);
+      posRef.current = pos;
+      setSnap(snapshotOf(pos, "standard"));
+      setSelected(null);
+      setLastMoves([]);
+      setLocked(false);
+      setDone(current.goal === "observe");
+      setMsg(message ?? current.coach);
+    },
+    [current, clearUndo],
+  );
+
   useEffect(() => {
     if (!current) return;
-    const pos = loadPosition("standard", current.fen);
-    posRef.current = pos;
-    setSnap(snapshotOf(pos, "standard"));
-    setSelected(null);
-    setDone(current.goal === "observe");
-    setMsg(current.coach);
+    resetBoard();
     speak(current.coach, {
       gender: settings.coachVoice,
       volume: settings.coachVol,
       rate: settings.coachRate,
       enabled: settings.coachOn && settings.sound,
     });
-  }, [current, settings.coachOn, settings.coachRate, settings.coachVoice, settings.coachVol, settings.sound]);
+    return clearUndo;
+  }, [
+    current,
+    resetBoard,
+    clearUndo,
+    settings.coachOn,
+    settings.coachRate,
+    settings.coachVoice,
+    settings.coachVol,
+    settings.sound,
+  ]);
 
   if (!lesson || !current || !snap) {
     return (
@@ -59,6 +104,54 @@ function LessonPage() {
   }
 
   const last = step === lesson.steps.length - 1;
+  const playable = Boolean(current.playable);
+
+  const onMove = (from: SquareName, to: SquareName) => {
+    const pos = posRef.current;
+    if (!pos || done || locked) return;
+    const mover = pos.turn;
+    const expected = current.expect ? matchesMove(pos, from, to, current.expect) : false;
+    const promo = isPromotionMove(pos, from, to);
+    const r = playFromTo(pos, from, to, promo ? "queen" : undefined);
+    if (!r) {
+      playSfx("illegal", settings.theme);
+      return;
+    }
+    const s = snapshotOf(pos, "standard");
+    setSnap(s);
+    setSelected(null);
+    setLastMoves([lastMoveFromUci(r.uci, mover)]);
+
+    const correct =
+      current.goal === "any" ||
+      (current.goal === "mate" && s.over && s.winner === mover) ||
+      (current.goal === "exact" && expected);
+    if (correct) {
+      playSfx(s.inCheck ? "check" : r.captured ? "capture" : "move", settings.theme);
+      setDone(true);
+      if (current.goal === "any") {
+        setMsg("That's the idea. Continue when you're ready.");
+      } else {
+        setMsg(current.goal === "mate" ? `${r.san} — mate. That's the finish.` : `${r.san} — correct.`);
+        playSfx("win", settings.theme);
+      }
+      return;
+    }
+    // Wrong: show it briefly, then take it back so the player stays on
+    // their own side of the board and can try again.
+    playSfx("illegal", settings.theme);
+    setLocked(true);
+    setMsg(
+      current.goal === "mate" ? `${r.san} is not mate. Try again.` : `${r.san} is legal, but not the idea. Try again.`,
+    );
+    undoTimer.current = window.setTimeout(() => {
+      resetBoard(
+        current.goal === "mate"
+          ? `${r.san} was not mate. ${current.coach}`
+          : `${r.san} was not it. ${current.coach}`,
+      );
+    }, WRONG_MOVE_MS);
+  };
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
@@ -71,49 +164,14 @@ function LessonPage() {
         <ChessBoard
           snap={snap}
           orientation="white"
-          interactive={Boolean(current.playable) && !done}
+          interactive={playable && !done && !locked}
           showCoords={settings.showCoords}
           markLastMove
           highlightLegal={settings.highlightLegal}
-          lastMoves={[]}
+          lastMoves={lastMoves}
           selected={selected}
           onSelect={setSelected}
-          onMove={(from, to) => {
-            const pos = posRef.current;
-            if (!pos) return;
-            const promo = isPromotionMove(pos, from, to);
-            const r = playFromTo(pos, from, to, promo ? "queen" : undefined);
-            if (!r) {
-              playSfx("illegal", settings.theme);
-              return;
-            }
-            playSfx("move", settings.theme);
-            const s = snapshotOf(pos, "standard");
-            setSnap(s);
-            setSelected(null);
-            const expect = current.expect;
-            if (current.goal === "any") {
-              setDone(true);
-              setMsg("That's the idea. Continue when you're ready.");
-            } else if (current.goal === "mate") {
-              if (s.over && s.winner === "white") {
-                setDone(true);
-                setMsg("Mate. That's the finish.");
-                playSfx("win", settings.theme);
-              } else {
-                setMsg("Not mate yet. Try the back rank.");
-              }
-            } else if (current.goal === "exact" && expect) {
-              const ok = expect.some((e) => e.from === from && e.to === to);
-              if (ok) {
-                setDone(true);
-                setMsg("Correct.");
-                playSfx("win", settings.theme);
-              } else {
-                setMsg("Legal, but not the idea. Look again.");
-              }
-            }
-          }}
+          onMove={onMove}
           reviewSquares={current.highlight}
         />
         <CoachBubble text={msg} />
@@ -128,9 +186,10 @@ function LessonPage() {
             Previous
           </Button>
           <Button
-            disabled={Boolean(current.playable) && !done}
+            disabled={playable && !done}
             onClick={() => {
               if (last) {
+                markLessonDone(lesson.id);
                 if (nextLesson) void nav({ to: "/learn/$id", params: { id: nextLesson.id } });
                 else void nav({ to: "/learn" });
               } else setStep((x) => x + 1);
@@ -138,7 +197,17 @@ function LessonPage() {
           >
             {last ? (nextLesson ? "Next lesson" : "Finish") : "Next"}
           </Button>
+          {playable && done && (
+            <Button variant="ghost" onClick={() => resetBoard()}>
+              <RotateCcw className="size-4" /> Again
+            </Button>
+          )}
         </div>
+        {playable && done && (
+          <p className="flex items-center gap-2 text-sm text-good">
+            <Check className="size-4" /> Step complete
+          </p>
+        )}
         <Link to="/learn" className="block text-sm text-muted underline-offset-4 hover:underline">
           All lessons
         </Link>

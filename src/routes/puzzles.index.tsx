@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Check, Flame } from "lucide-react";
-import { DAILY_PUZZLE, PUZZLES } from "@/lib/learn/puzzles";
+import { dailyPuzzle, PUZZLES } from "@/lib/learn/puzzles";
 import { isPuzzleDone, puzzleStreak } from "@/lib/learn/progress";
 
-export const Route = createFileRoute("/puzzles")({ component: PuzzlesIndex });
+export const Route = createFileRoute("/puzzles/")({ component: PuzzlesIndex });
 
 function PuzzlesIndex() {
+  const daily = dailyPuzzle();
   const [done, setDone] = useState<Set<string>>(new Set());
   const [streak, setStreak] = useState(0);
 
@@ -26,15 +27,15 @@ function PuzzlesIndex() {
 
       <Link
         to="/puzzles/$id"
-        params={{ id: DAILY_PUZZLE.id }}
+        params={{ id: "daily" }}
         className="flex items-center gap-4 rounded-[var(--radius-lg)] border border-accent/30 bg-accent/10 p-4 hover:bg-accent/15"
       >
         <Flame className="size-8 text-accent" />
         <div className="min-w-0 flex-1">
           <div className="font-medium">Daily puzzle</div>
-          <p className="text-sm text-muted">{DAILY_PUZZLE.title} · {DAILY_PUZZLE.theme}</p>
+          <p className="text-sm text-muted">{daily.title} · {daily.theme}</p>
         </div>
-        {isPuzzleDone(DAILY_PUZZLE.id) && <Check className="size-5 text-good" />}
+        {done.has(daily.id) && <Check className="size-5 text-good" />}
       </Link>
 
       {streak > 0 && (

@@ -13,18 +13,18 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AnalysisRouteImport } from './routes/analysis'
 import { Route as FairPlayRouteImport } from './routes/fair-play'
-import { Route as HistoryRouteImport } from './routes/history'
-import { Route as LearnRouteImport } from './routes/learn'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PlayRouteImport } from './routes/play'
 import { Route as ProfileRouteImport } from './routes/profile'
-import { Route as PuzzlesRouteImport } from './routes/puzzles'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StatsRouteImport } from './routes/stats'
 import { Route as VariantsRouteImport } from './routes/variants'
 import { Route as ApiRtcRouteImport } from './routes/api/rtc'
+import { Route as HistoryIndexRouteImport } from './routes/history.index'
 import { Route as HistoryIdRouteImport } from './routes/history.$id'
+import { Route as LearnIndexRouteImport } from './routes/learn.index'
 import { Route as LearnIdRouteImport } from './routes/learn.$id'
+import { Route as PuzzlesIndexRouteImport } from './routes/puzzles.index'
 import { Route as PuzzlesIdRouteImport } from './routes/puzzles.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
@@ -48,16 +48,6 @@ const FairPlayRoute = FairPlayRouteImport.update({
   path: '/fair-play',
   getParentRoute: () => rootRouteImport,
 } as any)
-const HistoryRoute = HistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LearnRoute = LearnRouteImport.update({
-  id: '/learn',
-  path: '/learn',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -71,11 +61,6 @@ const PlayRoute = PlayRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PuzzlesRoute = PuzzlesRouteImport.update({
-  id: '/puzzles',
-  path: '/puzzles',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -98,20 +83,35 @@ const ApiRtcRoute = ApiRtcRouteImport.update({
   path: '/api/rtc',
   getParentRoute: () => rootRouteImport,
 } as any)
+const HistoryIndexRoute = HistoryIndexRouteImport.update({
+  id: '/history/',
+  path: '/history/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HistoryIdRoute = HistoryIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => HistoryRoute,
+  id: '/history/$id',
+  path: '/history/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LearnIndexRoute = LearnIndexRouteImport.update({
+  id: '/learn/',
+  path: '/learn/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const LearnIdRoute = LearnIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => LearnRoute,
+  id: '/learn/$id',
+  path: '/learn/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PuzzlesIndexRoute = PuzzlesIndexRouteImport.update({
+  id: '/puzzles/',
+  path: '/puzzles/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const PuzzlesIdRoute = PuzzlesIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => PuzzlesRoute,
+  id: '/puzzles/$id',
+  path: '/puzzles/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
@@ -124,12 +124,9 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/analysis': typeof AnalysisRoute
   '/fair-play': typeof FairPlayRoute
-  '/history': typeof HistoryRouteWithChildren
-  '/learn': typeof LearnRouteWithChildren
   '/login': typeof LoginRoute
   '/play': typeof PlayRoute
   '/profile': typeof ProfileRoute
-  '/puzzles': typeof PuzzlesRouteWithChildren
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/variants': typeof VariantsRoute
@@ -137,6 +134,9 @@ export interface FileRoutesByFullPath {
   '/history/$id': typeof HistoryIdRoute
   '/learn/$id': typeof LearnIdRoute
   '/puzzles/$id': typeof PuzzlesIdRoute
+  '/history/': typeof HistoryIndexRoute
+  '/learn/': typeof LearnIndexRoute
+  '/puzzles/': typeof PuzzlesIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
@@ -144,12 +144,9 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/analysis': typeof AnalysisRoute
   '/fair-play': typeof FairPlayRoute
-  '/history': typeof HistoryRouteWithChildren
-  '/learn': typeof LearnRouteWithChildren
   '/login': typeof LoginRoute
   '/play': typeof PlayRoute
   '/profile': typeof ProfileRoute
-  '/puzzles': typeof PuzzlesRouteWithChildren
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/variants': typeof VariantsRoute
@@ -157,6 +154,9 @@ export interface FileRoutesByTo {
   '/history/$id': typeof HistoryIdRoute
   '/learn/$id': typeof LearnIdRoute
   '/puzzles/$id': typeof PuzzlesIdRoute
+  '/history': typeof HistoryIndexRoute
+  '/learn': typeof LearnIndexRoute
+  '/puzzles': typeof PuzzlesIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
@@ -165,12 +165,9 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/analysis': typeof AnalysisRoute
   '/fair-play': typeof FairPlayRoute
-  '/history': typeof HistoryRouteWithChildren
-  '/learn': typeof LearnRouteWithChildren
   '/login': typeof LoginRoute
   '/play': typeof PlayRoute
   '/profile': typeof ProfileRoute
-  '/puzzles': typeof PuzzlesRouteWithChildren
   '/settings': typeof SettingsRoute
   '/stats': typeof StatsRoute
   '/variants': typeof VariantsRoute
@@ -178,6 +175,9 @@ export interface FileRoutesById {
   '/history/$id': typeof HistoryIdRoute
   '/learn/$id': typeof LearnIdRoute
   '/puzzles/$id': typeof PuzzlesIdRoute
+  '/history/': typeof HistoryIndexRoute
+  '/learn/': typeof LearnIndexRoute
+  '/puzzles/': typeof PuzzlesIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
@@ -187,12 +187,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analysis'
     | '/fair-play'
-    | '/history'
-    | '/learn'
     | '/login'
     | '/play'
     | '/profile'
-    | '/puzzles'
     | '/settings'
     | '/stats'
     | '/variants'
@@ -200,6 +197,9 @@ export interface FileRouteTypes {
     | '/history/$id'
     | '/learn/$id'
     | '/puzzles/$id'
+    | '/history/'
+    | '/learn/'
+    | '/puzzles/'
     | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -207,12 +207,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analysis'
     | '/fair-play'
-    | '/history'
-    | '/learn'
     | '/login'
     | '/play'
     | '/profile'
-    | '/puzzles'
     | '/settings'
     | '/stats'
     | '/variants'
@@ -220,6 +217,9 @@ export interface FileRouteTypes {
     | '/history/$id'
     | '/learn/$id'
     | '/puzzles/$id'
+    | '/history'
+    | '/learn'
+    | '/puzzles'
     | '/api/auth/$'
   id:
     | '__root__'
@@ -227,12 +227,9 @@ export interface FileRouteTypes {
     | '/admin'
     | '/analysis'
     | '/fair-play'
-    | '/history'
-    | '/learn'
     | '/login'
     | '/play'
     | '/profile'
-    | '/puzzles'
     | '/settings'
     | '/stats'
     | '/variants'
@@ -240,6 +237,9 @@ export interface FileRouteTypes {
     | '/history/$id'
     | '/learn/$id'
     | '/puzzles/$id'
+    | '/history/'
+    | '/learn/'
+    | '/puzzles/'
     | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
@@ -248,16 +248,19 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   AnalysisRoute: typeof AnalysisRoute
   FairPlayRoute: typeof FairPlayRoute
-  HistoryRoute: typeof HistoryRouteWithChildren
-  LearnRoute: typeof LearnRouteWithChildren
   LoginRoute: typeof LoginRoute
   PlayRoute: typeof PlayRoute
   ProfileRoute: typeof ProfileRoute
-  PuzzlesRoute: typeof PuzzlesRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   StatsRoute: typeof StatsRoute
   VariantsRoute: typeof VariantsRoute
   ApiRtcRoute: typeof ApiRtcRoute
+  HistoryIdRoute: typeof HistoryIdRoute
+  LearnIdRoute: typeof LearnIdRoute
+  PuzzlesIdRoute: typeof PuzzlesIdRoute
+  HistoryIndexRoute: typeof HistoryIndexRoute
+  LearnIndexRoute: typeof LearnIndexRoute
+  PuzzlesIndexRoute: typeof PuzzlesIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -291,20 +294,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FairPlayRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/history': {
-      id: '/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof HistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/learn': {
-      id: '/learn'
-      path: '/learn'
-      fullPath: '/learn'
-      preLoaderRoute: typeof LearnRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -324,13 +313,6 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/puzzles': {
-      id: '/puzzles'
-      path: '/puzzles'
-      fullPath: '/puzzles'
-      preLoaderRoute: typeof PuzzlesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -361,26 +343,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiRtcRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/history/': {
+      id: '/history/'
+      path: '/history'
+      fullPath: '/history/'
+      preLoaderRoute: typeof HistoryIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/history/$id': {
       id: '/history/$id'
-      path: '/$id'
+      path: '/history/$id'
       fullPath: '/history/$id'
       preLoaderRoute: typeof HistoryIdRouteImport
-      parentRoute: typeof HistoryRoute
+      parentRoute: typeof rootRouteImport
+    }
+    '/learn/': {
+      id: '/learn/'
+      path: '/learn'
+      fullPath: '/learn/'
+      preLoaderRoute: typeof LearnIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/learn/$id': {
       id: '/learn/$id'
-      path: '/$id'
+      path: '/learn/$id'
       fullPath: '/learn/$id'
       preLoaderRoute: typeof LearnIdRouteImport
-      parentRoute: typeof LearnRoute
+      parentRoute: typeof rootRouteImport
+    }
+    '/puzzles/': {
+      id: '/puzzles/'
+      path: '/puzzles'
+      fullPath: '/puzzles/'
+      preLoaderRoute: typeof PuzzlesIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/puzzles/$id': {
       id: '/puzzles/$id'
-      path: '/$id'
+      path: '/puzzles/$id'
       fullPath: '/puzzles/$id'
       preLoaderRoute: typeof PuzzlesIdRouteImport
-      parentRoute: typeof PuzzlesRoute
+      parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
       id: '/api/auth/$'
@@ -392,53 +395,24 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface HistoryRouteChildren {
-  HistoryIdRoute: typeof HistoryIdRoute
-}
-
-const HistoryRouteChildren: HistoryRouteChildren = {
-  HistoryIdRoute: HistoryIdRoute,
-}
-
-const HistoryRouteWithChildren =
-  HistoryRoute._addFileChildren(HistoryRouteChildren)
-
-interface LearnRouteChildren {
-  LearnIdRoute: typeof LearnIdRoute
-}
-
-const LearnRouteChildren: LearnRouteChildren = {
-  LearnIdRoute: LearnIdRoute,
-}
-
-const LearnRouteWithChildren = LearnRoute._addFileChildren(LearnRouteChildren)
-
-interface PuzzlesRouteChildren {
-  PuzzlesIdRoute: typeof PuzzlesIdRoute
-}
-
-const PuzzlesRouteChildren: PuzzlesRouteChildren = {
-  PuzzlesIdRoute: PuzzlesIdRoute,
-}
-
-const PuzzlesRouteWithChildren =
-  PuzzlesRoute._addFileChildren(PuzzlesRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   AnalysisRoute: AnalysisRoute,
   FairPlayRoute: FairPlayRoute,
-  HistoryRoute: HistoryRouteWithChildren,
-  LearnRoute: LearnRouteWithChildren,
   LoginRoute: LoginRoute,
   PlayRoute: PlayRoute,
   ProfileRoute: ProfileRoute,
-  PuzzlesRoute: PuzzlesRouteWithChildren,
   SettingsRoute: SettingsRoute,
   StatsRoute: StatsRoute,
   VariantsRoute: VariantsRoute,
   ApiRtcRoute: ApiRtcRoute,
+  HistoryIdRoute: HistoryIdRoute,
+  LearnIdRoute: LearnIdRoute,
+  PuzzlesIdRoute: PuzzlesIdRoute,
+  HistoryIndexRoute: HistoryIndexRoute,
+  LearnIndexRoute: LearnIndexRoute,
+  PuzzlesIndexRoute: PuzzlesIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

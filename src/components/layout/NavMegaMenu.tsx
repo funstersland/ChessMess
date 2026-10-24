@@ -16,7 +16,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DAILY_PUZZLE } from "@/lib/learn/puzzles";
 
 type Item = { to: string; label: string; icon: LucideIcon; search?: Record<string, string> };
 type Section = { id: string; label: string; icon: LucideIcon; items: Item[]; match: (p: string) => boolean };
@@ -91,7 +90,7 @@ export function NavMegaMenu({ path }: { path: string }) {
                 {section.items.map((item) => {
                   const ItemIcon = item.icon;
                   const params =
-                    item.to === "/puzzles/$id" ? { id: DAILY_PUZZLE.id } : undefined;
+                    item.to === "/puzzles/$id" ? { id: "daily" } : undefined;
                   return (
                     <Link
                       key={item.label}
