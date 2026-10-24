@@ -94,15 +94,47 @@ function AdminPage() {
             </div>
             <div>
               <div className="font-medium">
-                {me.canClaimAdmin ? "This court has no steward yet." : "The desk is seated."}
+                {me.canClaimAdmin
+                  ? "This court has no steward yet."
+                  : me.adminSetup === "first-come"
+                    ? "The desk is seated."
+                    : "Stewards are appointed by the site owner."}
               </div>
               <p className="text-sm text-muted">
                 {me.canClaimAdmin
                   ? "Claim it to review flags and approve suspensions."
-                  : "Only the sitting steward can suspend a player."}
+                  : me.adminSetup === "first-come"
+                    ? "Only the sitting steward can suspend a player."
+                    : "Only accounts the owner lists on the server can review cases."}
               </p>
             </div>
           </div>
+          {me.adminSetup !== "first-come" && (
+            <div className="mt-4 space-y-2 text-sm text-muted">
+              <p>
+                To make this account a steward, add its account ID to the{" "}
+                <code className="rounded bg-elevated px-1 py-0.5 text-fg">ADMIN_USER_IDS</code>{" "}
+                server variable and redeploy.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="rounded-[var(--radius-sm)] border border-border bg-elevated px-2 py-1 text-xs text-fg break-all">
+                  {me.userId}
+                </code>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    void navigator.clipboard
+                      ?.writeText(me.userId)
+                      .then(() => toast.success("Account ID copied"))
+                      .catch(() => toast.error("Could not copy"));
+                  }}
+                >
+                  Copy ID
+                </Button>
+              </div>
+            </div>
+          )}
           {me.canClaimAdmin && (
             <Button
               className="mt-4"

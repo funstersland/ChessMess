@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql } from "@/lib/db";
+import { dbSource, getSql } from "@/lib/db";
 import { riskFromMetrics } from "@/lib/fairplay/score";
 import type { AccountStatus, CaseStatus, ScanMetrics, ScanReport, Verdict } from "@/lib/fairplay/types";
 
@@ -97,7 +97,48 @@ async function ensureProfile(userId: string, name: string) {
   return sql;
 }
 
+/*
+ * Who may sit at the steward desk.
+ *
+ * - ADMIN_USER_IDS / ADMIN_EMAILS (comma-separated server env vars) are the
+ *   source of truth when set: only those accounts are admins. Emails count
+ *   only once verified (e.g. Google sign-in), since email/password sign-up
+ *   does not verify addresses and anyone could register the owner's email.
+ * - Without them, the live site (Postgres) honours existing admins but allows
+ *   no new claims, so a stranger can no longer claim an empty desk.
+ * - Local preview (PGLite) keeps first-come claiming for testing.
+ */
+type AdminSetup = "allowlist" | "first-come" | "owner-config";
+
+function adminAllowlist() {
+  const list = (v: string | undefined) =>
+    (v ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const ids = list(process.env.ADMIN_USER_IDS);
+  const emails = list(process.env.ADMIN_EMAILS).map((e) => e.toLowerCase());
+  return { ids, emails, configured: ids.length > 0 || emails.length > 0 };
+}
+
+function adminSetup(): AdminSetup {
+  if (adminAllowlist().configured) return "allowlist";
+  return dbSource === "pglite" ? "first-come" : "owner-config";
+}
+
+async function isAllowlisted(userId: string): Promise<boolean> {
+  const a = adminAllowlist();
+  if (a.ids.includes(userId)) return true;
+  if (a.emails.length === 0) return false;
+  const sql = await getSql();
+  const rows = await sql<{ email: string; verified: boolean }>`
+    select email, "emailVerified" as verified from "user" where id = ${userId}`;
+  const u = rows[0];
+  return Boolean(u?.verified && a.emails.includes(u.email.toLowerCase()));
+}
+
 async function isAdmin(userId: string): Promise<boolean> {
+  if (adminAllowlist().configured) return isAllowlisted(userId);
   const sql = await getSql();
   const rows = await sql<{ is_admin: boolean }>`select is_admin from profiles where user_id = ${userId}`;
   return Boolean(rows[0]?.is_admin);
@@ -106,6 +147,15 @@ async function isAdmin(userId: string): Promise<boolean> {
 async function adminExists(): Promise<boolean> {
   const sql = await getSql();
   const rows = await sql<{ n: number }>`select count(*)::int as n from profiles where is_admin = true`;
+  return (rows[0]?.n ?? 0) > 0;
+}
+
+/** Reports one player may file per rolling day. */
+const REPORTS_PER_DAY = 10;
+
+async function userExists(userId: string): Promise<boolean> {
+  const sql = await getSql();
+  const rows = await sql<{ n: number }>`select count(*)::int as n from "user" where id = ${userId}`;
   return (rows[0]?.n ?? 0) > 0;
 }
 
@@ -125,10 +175,13 @@ export const getFairPlayMe = createServerFn({ method: "GET" })
       select risk_score, verdict from fair_play_scans
       where user_id = ${context.userId} and source <> 'sample' and coalesce(kind, 'auto') = 'auto'
       order by created_at desc limit 8`;
+    // Reports filed against you stay with the steward; only count your own scans.
     const pending = await sql<{ n: number }>`
       select count(*)::int as n from fair_play_cases
-      where user_id = ${context.userId} and status = 'pending'`;
-    const hasAdmin = await adminExists();
+      where user_id = ${context.userId} and status = 'pending' and coalesce(kind, 'auto') = 'auto'`;
+    const setup = adminSetup();
+    const admin = await isAdmin(context.userId);
+    const hasAdmin = setup === "first-come" ? await adminExists() : true;
     const maxRisk = scans.reduce((a, s) => Math.max(a, s.risk_score), 0);
     const score =
       row.account_status === "suspended"
@@ -137,10 +190,12 @@ export const getFairPlayMe = createServerFn({ method: "GET" })
           ? Math.max(0, 100 - maxRisk)
           : row.fair_play_score;
     return {
+      userId: context.userId,
       displayName: row.display_name,
-      isAdmin: row.is_admin,
+      isAdmin: admin,
       hasAdmin,
-      canClaimAdmin: !row.is_admin && !hasAdmin,
+      adminSetup: setup,
+      canClaimAdmin: setup === "first-come" && !admin && !hasAdmin,
       status: (row.account_status as AccountStatus) || "ok",
       score: score ?? null,
       suspendReason: row.suspend_reason,
@@ -153,10 +208,27 @@ export const claimAdminDesk = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const sql = await ensureProfile(context.userId, "Player");
-    if (await adminExists()) {
-      throw new Error("A steward already sits at this desk.");
+    const setup = adminSetup();
+    if (setup === "allowlist") {
+      if (!(await isAllowlisted(context.userId))) {
+        throw new Error("Only accounts listed by the site owner can be stewards.");
+      }
+      await sql`update profiles set is_admin = true, updated_at = now() where user_id = ${context.userId}`;
+      return { ok: true as const };
     }
-    await sql`update profiles set is_admin = true, updated_at = now() where user_id = ${context.userId}`;
+    if (setup === "owner-config") {
+      throw new Error(
+        "Stewards are set by the site owner. Add your account ID to ADMIN_USER_IDS on the server.",
+      );
+    }
+    // Local preview only: first come, first served — in one statement so two
+    // simultaneous claims cannot both win.
+    const won = await sql<{ user_id: string }>`
+      update profiles set is_admin = true, updated_at = now()
+      where user_id = ${context.userId}
+        and not exists (select 1 from profiles where is_admin = true)
+      returning user_id`;
+    if (!won[0]) throw new Error("A steward already sits at this desk.");
     return { ok: true as const };
   });
 
@@ -174,7 +246,10 @@ export const submitFairPlayScan = createServerFn({ method: "POST" })
       fenStart: z.string().max(180),
       rating: z.number(),
       metrics: metricsSchema,
-      report: z.any(),
+      // The client's full scan report, kept for the steward. Bounded in size.
+      report: z.unknown().refine((v) => JSON.stringify(v ?? null).length <= 120_000, {
+        message: "Report too large",
+      }),
       kind: z.enum(["auto", "report"]).optional(),
       subjectUserId: z.string().max(80).optional(),
       subjectName: z.string().max(80).optional(),
@@ -186,15 +261,32 @@ export const submitFairPlayScan = createServerFn({ method: "POST" })
       select display_name, account_status from profiles where user_id = ${context.userId}`;
     const reporterName = me[0]?.display_name ?? "Player";
     const kind = data.kind ?? (data.source === "report" ? "report" : "auto");
+    if (me[0]?.account_status === "suspended") {
+      throw new Error("Suspended accounts cannot submit scans or reports.");
+    }
     if (kind === "report" && data.subjectUserId && data.subjectUserId === context.userId) {
       throw new Error("You cannot report yourself.");
     }
+    if (kind === "report") {
+      const recent = await sql<{ n: number }>`
+        select count(*)::int as n from fair_play_scans
+        where reporter_id = ${context.userId} and kind = 'report'
+          and created_at > now() - interval '1 day'`;
+      if ((recent[0]?.n ?? 0) >= REPORTS_PER_DAY) {
+        throw new Error("Report limit reached. Try again tomorrow.");
+      }
+    }
 
+    // A reported user id is only trusted if it is a real account; otherwise
+    // the case is filed under the opponent's name. Never create profiles for
+    // ids a client made up.
+    const subjectId =
+      kind === "report" && data.subjectUserId && (await userExists(data.subjectUserId))
+        ? data.subjectUserId
+        : null;
     const accusedId =
       kind === "report"
-        ? data.subjectUserId && data.subjectUserId.length > 0
-          ? data.subjectUserId
-          : `named:${slugName(data.subjectName || data.opponent || "unknown")}`
+        ? (subjectId ?? `named:${slugName(data.subjectName || data.opponent || "unknown")}`)
         : context.userId;
     const accusedName =
       kind === "report" ? data.subjectName || data.opponent || "Opponent" : reporterName;
@@ -224,7 +316,7 @@ export const submitFairPlayScan = createServerFn({ method: "POST" })
       ${m.court.top1}, ${m.court.top3}, ${m.court.acpl}, ${m.sentinel.top1}, ${m.sentinel.top3}, ${m.sentinel.acpl},
       ${m.consensus}, ${m.accuracy}, ${risk}, ${verdict}, ${JSON.stringify(engines)}::jsonb,
       ${JSON.stringify(data.report)}::jsonb,
-      ${context.userId}, ${kind}, ${data.subjectUserId ?? null}
+      ${context.userId}, ${kind}, ${subjectId}
     ) on conflict (id) do nothing`;
 
     const createCase =
@@ -245,8 +337,9 @@ export const submitFairPlayScan = createServerFn({ method: "POST" })
       } else {
         caseId = existing[0].id;
       }
-      if (!isNamedSubject(accusedId)) {
-        await sql`insert into profiles (user_id, display_name) values (${accusedId}, ${accusedName}) on conflict (user_id) do nothing`;
+      // A report only opens a case for the steward. It never changes the
+      // reported player's status — otherwise anyone could flag anyone.
+      if (kind === "auto" && !isNamedSubject(accusedId)) {
         const acc = await sql<{ account_status: string }>`
           select account_status from profiles where user_id = ${accusedId}`;
         if (acc[0]?.account_status !== "suspended") {
@@ -279,10 +372,16 @@ export const listMyScans = createServerFn({ method: "GET" })
         consensus, accuracy, risk_score, verdict, engines_used, report,
         created_at::text as created_at, reporter_id, kind, subject_user_id
       from fair_play_scans
-      where user_id = ${context.userId} or reporter_id = ${context.userId}
+      where (user_id = ${context.userId} and coalesce(kind, 'auto') = 'auto')
+        or reporter_id = ${context.userId}
       order by created_at desc
       limit 30`;
-    return rows.map(shapeScan);
+    // Reports filed against you are for the steward only, and a reporter's
+    // identity is never sent to anyone but the reporter.
+    return rows.map((r) => {
+      const scan = shapeScan(r);
+      return scan.reporterId === context.userId ? scan : { ...scan, reporterId: null };
+    });
   });
 
 export const listFairPlayCases = createServerFn({ method: "GET" })
