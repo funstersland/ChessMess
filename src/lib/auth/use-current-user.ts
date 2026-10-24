@@ -1,3 +1,4 @@
+import { useHydrated } from "@/lib/use-hydrated";
 import { authClient, authEnabled } from "./client";
 
 /** Normalized user shape used across the app, auth on or off. */
@@ -58,6 +59,12 @@ export function useCurrentUserState(): CurrentUserState {
   if (!authEnabled) return { user: DEV_USER, isPending: false };
   // eslint-disable-next-line react-hooks/rules-of-hooks -- authEnabled is constant for the app's lifetime
   const { data, isPending } = authClient.useSession();
+  // eslint-disable-next-line react-hooks/rules-of-hooks -- same constant guard as above
+  const hydrated = useHydrated();
+  // The server always renders "loading" (it has no session store), and the
+  // session can resolve before React hydrates. Report loading until hydration
+  // is done so the first browser render matches the server HTML.
+  if (!hydrated) return { user: null, isPending: true };
   const user = data?.user;
   return {
     user: user

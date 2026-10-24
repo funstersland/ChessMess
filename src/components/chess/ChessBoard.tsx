@@ -24,12 +24,6 @@ export type { CaptureFxData };
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
-function isDarkSquare(sq: SquareName) {
-  const file = sq.charCodeAt(0) - 97;
-  const rank = Number(sq[1]) - 1;
-  return (file + rank) % 2 === 0;
-}
-
 export function ChessBoard({
   snap,
   orientation,

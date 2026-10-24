@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import type { Side, SquareName } from "@/lib/chess/types";
+import type { Side } from "@/lib/chess/types";
 import { cn } from "@/lib/utils";
 import { PieceSvg } from "./PieceSvg";
 import { type CaptureFxData, sqCenterPct } from "./captureFx";

@@ -8,7 +8,6 @@ import { loadPosition, snapshotOf } from "@/lib/chess/engine";
 import type { AnalyzeItem, PlayedMove, Side, VariantId } from "@/lib/chess/types";
 import type { ParsedMove } from "@/lib/fairplay/pgn";
 import { useSettings } from "@/lib/store/settings";
-import { playSfx } from "@/lib/audio/sfx";
 import { cn } from "@/lib/utils";
 
 function toPlayed(m: ParsedMove, analysis?: AnalyzeItem[]): PlayedMove {
