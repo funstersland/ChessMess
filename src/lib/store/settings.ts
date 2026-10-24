@@ -1,12 +1,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { BoardStyleId, WorldThemeId } from "@/lib/chess/types";
+import { DEFAULT_PIECE_SET, type PieceSetId } from "@/lib/chess/pieceSets";
 import type { CoachGender } from "@/lib/coach/coach";
 import { normalizeBoardStyle, themeById } from "@/lib/theme/themes";
 
 export interface SettingsState {
   theme: WorldThemeId;
   boardStyle: BoardStyleId;
+  /** Piece artwork; see `PIECE_SETS`. */
+  pieceSet: PieceSetId;
   lockThemeAssets: boolean;
   showCoords: boolean;
   showCaptured: boolean;
@@ -29,12 +32,21 @@ export interface SettingsState {
   set: (p: Partial<SettingsState>) => void;
 }
 
+/**
+ * Appearance defaults. The server always renders with these (it cannot see
+ * localStorage), so components switch to the stored choice after hydration.
+ */
+export const APPEARANCE_DEFAULTS = {
+  theme: "ivory" as WorldThemeId,
+  boardStyle: "ivory" as BoardStyleId,
+  lockThemeAssets: true,
+  pieceSet: DEFAULT_PIECE_SET,
+};
+
 export const useSettings = create<SettingsState>()(
   persist(
     (set, get) => ({
-      theme: "ivory",
-      boardStyle: "ivory",
-      lockThemeAssets: true,
+      ...APPEARANCE_DEFAULTS,
       showCoords: true,
       showCaptured: true,
       markLastMove: true,
@@ -83,7 +95,8 @@ export const useSettings = create<SettingsState>()(
           }
         }
         if (fromVersion < 4) {
-          delete next.pieceSet;
+          // Pre-v4 piece-set ids belong to an older, removed picker.
+          delete (next as { pieceSet?: unknown }).pieceSet;
         }
         return next;
       },

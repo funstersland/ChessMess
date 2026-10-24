@@ -648,6 +648,131 @@
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--cm-legal-ring-dark) 40%, transparent);
 }
 
+/* Coordinates and other board-coloured text follow the active board, not the world. */
+.cm-board-frame {
+  --color-board-light: var(--cm-board-light);
+  --color-board-dark: var(--cm-board-dark);
+}
+
+/* ── Classic flat boards ───────────────────────────────────── */
+.cm-board-frame[data-board="brown"] {
+  --cm-board-light: #f0d9b5;
+  --cm-board-dark: #b58863;
+}
+.cm-board-frame[data-board="green"] {
+  --cm-board-light: #eeeed2;
+  --cm-board-dark: #769656;
+}
+.cm-board-frame[data-board="blue"] {
+  --cm-board-light: #dee3e6;
+  --cm-board-dark: #8ca2ad;
+}
+.cm-board-frame[data-board="olive"] {
+  --cm-board-light: #e8e9d0;
+  --cm-board-dark: #98a160;
+}
+.cm-board-frame[data-board="slate"] {
+  --cm-board-light: #dfe3e8;
+  --cm-board-dark: #7b8a9a;
+}
+.cm-board-frame[data-board="lavender"] {
+  --cm-board-light: #ece6f4;
+  --cm-board-dark: #9c86c0;
+}
+.cm-board-frame[data-board="rose"] {
+  --cm-board-light: #f4e6e4;
+  --cm-board-dark: #c48b92;
+}
+.cm-board-frame:is(
+    [data-board="brown"],
+    [data-board="green"],
+    [data-board="blue"],
+    [data-board="olive"],
+    [data-board="slate"],
+    [data-board="lavender"],
+    [data-board="rose"]
+  ) {
+  --cm-last: rgba(155, 199, 0, 0.41);
+  --cm-sel: rgba(20, 85, 30, 0.45);
+  --cm-legal-dot-light: rgba(0, 0, 0, 0.2);
+  --cm-legal-dot-dark: rgba(0, 0, 0, 0.24);
+  --cm-legal-ring-light: rgba(0, 0, 0, 0.26);
+  --cm-legal-ring-dark: rgba(0, 0, 0, 0.3);
+  background: color-mix(in oklab, var(--cm-board-dark) 55%, #1a1a1a);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--cm-board-dark) 60%, transparent),
+    0 14px 40px color-mix(in oklab, #000 28%, transparent);
+}
+.cm-board-frame:is(
+    [data-board="brown"],
+    [data-board="green"],
+    [data-board="blue"],
+    [data-board="olive"],
+    [data-board="slate"],
+    [data-board="lavender"],
+    [data-board="rose"]
+  )
+  :is(.cm-sq-light, .cm-sq-dark) {
+  box-shadow: none;
+}
+.cm-board-frame:is(
+    [data-board="brown"],
+    [data-board="green"],
+    [data-board="blue"],
+    [data-board="olive"],
+    [data-board="slate"],
+    [data-board="lavender"],
+    [data-board="rose"]
+  )
+  .cm-sq-light {
+  background: var(--cm-board-light);
+}
+.cm-board-frame:is(
+    [data-board="brown"],
+    [data-board="green"],
+    [data-board="blue"],
+    [data-board="olive"],
+    [data-board="slate"],
+    [data-board="lavender"],
+    [data-board="rose"]
+  )
+  .cm-sq-dark {
+  background: var(--cm-board-dark);
+}
+.cm-board-frame:is(
+    [data-board="brown"],
+    [data-board="green"],
+    [data-board="blue"],
+    [data-board="olive"],
+    [data-board="slate"],
+    [data-board="lavender"],
+    [data-board="rose"]
+  )
+  .cm-legal-dot,
+.cm-board-frame:is(
+    [data-board="brown"],
+    [data-board="green"],
+    [data-board="blue"],
+    [data-board="olive"],
+    [data-board="slate"],
+    [data-board="lavender"],
+    [data-board="rose"]
+  )
+  .cm-legal-ring {
+  box-shadow: none;
+}
+
+/* Image-based piece sets: keep the art crisp and unselectable. */
+.cm-piece-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
 @keyframes cm-ocean-wave {
   0%,
   100% {

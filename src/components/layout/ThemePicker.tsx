@@ -110,6 +110,20 @@ export function ThemePicker() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              void navigate({ to: "/settings", hash: "appearance" });
+            }}
+            className="mt-2 flex w-full items-center justify-between rounded-[var(--radius-sm)] border border-border bg-bg px-2.5 py-2 text-left text-sm hover:bg-surface"
+          >
+            <span>
+              Pieces &amp; board
+              <span className="block text-[11px] text-subtle">12 piece sets · 15 boards</span>
+            </span>
+            <span aria-hidden className="text-subtle">→</span>
+          </button>
         </div>
       )}
     </div>

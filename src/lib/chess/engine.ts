@@ -351,6 +351,14 @@ export function capturedFromStart(
 ): { white: AppRole[]; black: AppRole[] } {
   // Pieces missing vs a standard army ( palettes for display ).
   const start = { p: 8, n: 2, b: 2, r: 2, q: 1, k: 1 };
+  const charOf: Record<Role, keyof typeof start> = {
+    pawn: "p",
+    knight: "n",
+    bishop: "b",
+    rook: "r",
+    queen: "q",
+    king: "k",
+  };
   const roleChar: Record<string, AppRole> = {
     p: "pawn",
     n: "knight",
@@ -363,8 +371,8 @@ export function capturedFromStart(
     const c = { p: 0, n: 0, b: 0, r: 0, q: 0, k: 0 };
     for (const [, piece] of pos.board) {
       if (piece.color !== color) continue;
-      const ch = piece.role[0] === "k" ? "k" : piece.role[0];
-      if (ch in c) c[ch as keyof typeof c]++;
+      // Map by role, not first letter: "knight" and "king" both start with "k".
+      c[charOf[piece.role]]++;
     }
     if (pos.pockets) {
       const p = pos.pockets[color];

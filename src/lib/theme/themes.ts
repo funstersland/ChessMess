@@ -14,6 +14,17 @@ export interface BoardStyleInfo {
   world?: WorldThemeId;
 }
 
+/** Flat classic boards — no textures or capture effects, maximum clarity. */
+export const CLASSIC_BOARD_STYLES: BoardStyleInfo[] = [
+  { id: "brown", name: "Brown", line: "The classic tan and walnut of club boards." },
+  { id: "green", name: "Tournament", line: "Cream and green, like a vinyl roll-up board." },
+  { id: "blue", name: "Blue", line: "Cool grey-blue. Easy on the eyes for long sessions." },
+  { id: "olive", name: "Olive", line: "Pale stone and soft olive. Low contrast, calm." },
+  { id: "slate", name: "Slate", line: "Neutral greys that let colourful pieces pop." },
+  { id: "lavender", name: "Lavender", line: "Soft lilac and violet." },
+  { id: "rose", name: "Rose", line: "Blush and dusty rose." },
+];
+
 /** Boards tied to playable worlds — shown in Settings → Board. */
 export const WORLD_BOARD_STYLES: BoardStyleInfo[] = [
   {
@@ -48,8 +59,8 @@ export const WORLD_BOARD_STYLES: BoardStyleInfo[] = [
   },
 ];
 
-/** All selectable boards — worlds plus royal / noir / ivory. */
-export const BOARD_STYLES: BoardStyleInfo[] = [
+/** Textured boards from the worlds — wood, ice, forest, ocean, paper, ivory, royal, noir. */
+export const THEMED_BOARD_STYLES: BoardStyleInfo[] = [
   ...WORLD_BOARD_STYLES,
   {
     id: "ivory",
@@ -70,6 +81,9 @@ export const BOARD_STYLES: BoardStyleInfo[] = [
     world: "noir",
   },
 ];
+
+/** Every selectable board: flat classics first, then the textured world boards. */
+export const BOARD_STYLES: BoardStyleInfo[] = [...CLASSIC_BOARD_STYLES, ...THEMED_BOARD_STYLES];
 
 export const WORLD_THEMES: WorldTheme[] = [
   {

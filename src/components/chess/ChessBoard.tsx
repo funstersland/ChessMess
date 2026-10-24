@@ -7,10 +7,9 @@ import type {
   SquareName,
 } from "@/lib/chess/types";
 import type { BoardStyleId } from "@/lib/chess/types";
-import { useSettings } from "@/lib/store/settings";
-import { themeById } from "@/lib/theme/themes";
 import { cn } from "@/lib/utils";
 import { PieceSvg } from "./PieceSvg";
+import { useActiveBoardStyle, useActivePieceSet, usePreloadPieceSet } from "./appearance";
 import { type CaptureFxData, sqCenterPct } from "./captureFx";
 import { ForestCaptureFx } from "./ForestCaptureFx";
 import { IceCaptureFx } from "./IceCaptureFx";
@@ -76,10 +75,8 @@ export function ChessBoard({
     y: number;
   } | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  const { theme, boardStyle, lockThemeAssets } = useSettings();
-  const activeBoard: BoardStyleId = lockThemeAssets
-    ? themeById(theme).defaultBoard
-    : boardStyle;
+  const activeBoard: BoardStyleId = useActiveBoardStyle();
+  usePreloadPieceSet(useActivePieceSet());
 
   const grid = useMemo(() => {
     const ranks = orientation === "white" ? [8, 7, 6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6, 7, 8];

@@ -4,11 +4,16 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { useSettings } from "@/lib/store/settings";
-import { BOARD_STYLES, WORLD_THEMES } from "@/lib/theme/themes";
+import { WORLD_THEMES } from "@/lib/theme/themes";
+import {
+  AppearancePreview,
+  BoardSetPicker,
+  PieceSetPicker,
+} from "@/components/chess/AppearancePicker";
 import { playSfx, startThemeMusic, unlockAudio } from "@/lib/audio/sfx";
 import { speak } from "@/lib/coach/coach";
 import { cn } from "@/lib/utils";
-import type { BoardStyleId, WorldThemeId } from "@/lib/chess/types";
+import type { WorldThemeId } from "@/lib/chess/types";
 
 export const Route = createFileRoute("/settings")({ component: SettingsPage });
 
@@ -49,37 +54,25 @@ function SettingsPage() {
             </button>
           ))}
         </div>
-        <Row label="Sync board with world theme">
-          <Switch
-            checked={s.lockThemeAssets}
-            onCheckedChange={(v) => s.set({ lockThemeAssets: v })}
-          />
-        </Row>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="font-display text-xl">Board</h2>
-        <p className="text-sm text-muted">
-          Each board has its own look — wood grain, ice crystal, forest marble, rain-slick ocean,
-          aged paper, ivory, royal red, or noir pearl.
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {BOARD_STYLES.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => s.set({ boardStyle: b.id as BoardStyleId, lockThemeAssets: false })}
-              className={cn(
-                "rounded-[var(--radius-md)] border px-3 py-3 text-left transition-colors",
-                s.boardStyle === b.id ? "border-accent bg-accent text-accent-fg" : "border-border bg-surface",
-              )}
-            >
-              <div className="text-sm font-medium">{b.name}</div>
-              <p className={cn("mt-1 text-xs", s.boardStyle === b.id ? "text-accent-fg/80" : "text-subtle")}>
-                {b.line}
-              </p>
-            </button>
-          ))}
+      <section id="appearance" className="scroll-mt-24 space-y-4">
+        <div>
+          <h2 className="font-display text-xl">Pieces &amp; board</h2>
+          <p className="text-sm text-muted">
+            Pick any piece set with any board. The preview updates as you choose.
+          </p>
+        </div>
+        <div className="rounded-[var(--radius-lg)] border border-border bg-surface p-4">
+          <AppearancePreview />
+        </div>
+        <div className="space-y-2">
+          <h3 className="font-display text-lg">Pieces</h3>
+          <PieceSetPicker />
+        </div>
+        <div className="space-y-2">
+          <h3 className="font-display text-lg">Board</h3>
+          <BoardSetPicker />
         </div>
       </section>
 

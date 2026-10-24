@@ -68,6 +68,7 @@ import { EvalBar } from "./EvalBar";
 import { MoveList } from "./MoveList";
 import { PocketBar } from "./PocketBar";
 import { PieceSvg } from "./PieceSvg";
+import { AppearanceButton } from "./AppearancePicker";
 import { FriendBridge, isValidRoomCode, makeRoomCode, normalizeRoomCode, type FriendHello, type FriendIdentity, type FriendMsg } from "./FriendBridge";
 import { cn } from "@/lib/utils";
 
@@ -1405,6 +1406,7 @@ export function PlayArena({
           >
             <Flag className="size-4" /> Resign
           </Button>
+          <AppearanceButton className="col-span-2" />
         </div>
         <MoveList
           moves={moves}

@@ -17,6 +17,7 @@ export type Side = "white" | "black";
 export type Role = "king" | "queen" | "rook" | "bishop" | "knight" | "pawn";
 export type SquareName = string;
 export type BoardStyleId =
+  // Textured boards tied to the world themes (with capture effects).
   | "wood"
   | "ice"
   | "forest"
@@ -24,7 +25,15 @@ export type BoardStyleId =
   | "paper"
   | "royal"
   | "noir"
-  | "ivory";
+  | "ivory"
+  // Flat classic boards.
+  | "brown"
+  | "blue"
+  | "green"
+  | "olive"
+  | "slate"
+  | "lavender"
+  | "rose";
 
 export type WorldThemeId =
   | "royal"
