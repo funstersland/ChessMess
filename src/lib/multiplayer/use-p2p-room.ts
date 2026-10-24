@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { P2PRoom, type PeerInfo } from "./p2p";
+import { makePeerKey, P2PRoom, type PeerInfo } from "./p2p";
 
 export interface UseP2PRoomOptions {
   room?: string;
@@ -11,6 +11,8 @@ export interface P2PRoomHandle {
   room: string;
   peers: PeerInfo[];
   joined: boolean;
+  /** Set when the relay refused to seat this browser. */
+  rejected: "room_full" | "forbidden" | null;
   broadcast: (data: unknown) => void;
   send: (data: unknown, peerId?: string) => void;
   onMessage: (
@@ -20,10 +22,14 @@ export interface P2PRoomHandle {
 
 export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
   const [selfId] = useState(() => `p-${Math.random().toString(36).slice(2, 10)}`);
+  // Same lifetime as selfId: a remount (React StrictMode, HMR) re-joins with
+  // the same id and must present the same secret.
+  const [key] = useState(() => makePeerKey());
   const [room] = useState(() => options.room ?? "lobby");
   const [name] = useState(() => options.name ?? selfId);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [joined, setJoined] = useState(false);
+  const [rejected, setRejected] = useState<"room_full" | "forbidden" | null>(null);
   const roomRef = useRef<P2PRoom | null>(null);
   const listeners = useRef(
     new Set<(from: string, data: unknown, channel: "state" | "reliable") => void>(),
@@ -33,12 +39,14 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
     const p2p = new P2PRoom({
       room,
       selfId,
+      key,
       name,
       onPeersChanged: setPeers,
       onMessage: (from, data, channel) => {
         for (const fn of listeners.current) fn(from, data, channel);
       },
       onConnected: () => setJoined(true),
+      onRejected: setRejected,
     });
     roomRef.current = p2p;
     void p2p.join();
@@ -46,7 +54,7 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
       roomRef.current = null;
       p2p.close();
     };
-  }, [room, selfId, name]);
+  }, [room, selfId, key, name]);
 
   const broadcast = useCallback((data: unknown) => roomRef.current?.broadcast(data), []);
   const send = useCallback(
@@ -63,5 +71,5 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
     [],
   );
 
-  return { selfId, room, peers, joined, broadcast, send, onMessage };
+  return { selfId, room, peers, joined, rejected, broadcast, send, onMessage };
 }

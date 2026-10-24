@@ -14,7 +14,14 @@ export const Route = createFileRoute("/play")({
     bot: typeof s.bot === "string" ? s.bot : undefined,
     variant: typeof s.variant === "string" ? s.variant : undefined,
     vs: typeof s.vs === "string" ? s.vs : undefined,
-    room: typeof s.room === "string" ? s.room : undefined,
+    // The router parses ?room=751423 as a number (codes with a leading zero
+    // stay strings), so accept both or most invite links lose their code.
+    room:
+      typeof s.room === "string"
+        ? s.room
+        : typeof s.room === "number" && Number.isInteger(s.room)
+          ? String(s.room).padStart(6, "0")
+          : undefined,
   }),
   component: PlayPage,
 });

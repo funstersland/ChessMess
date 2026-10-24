@@ -52,6 +52,13 @@ export interface P2PRoomOptions {
   onMessage?: (from: string, data: unknown, channel: "state" | "reliable") => void;
   /** Fires once, on the first successful signaling poll (registration). */
   onConnected?: () => void;
+  /** The relay refused this peer: the room is full, or the account may not play. */
+  onRejected?: (reason: "room_full" | "forbidden") => void;
+  /**
+   * Secret bound to `selfId` on the relay. Keep it for as long as the id
+   * (see useP2PRoom) so a remount does not lock itself out.
+   */
+  key?: string;
 }
 
 interface PeerSlot {
@@ -95,8 +102,16 @@ export function defaultIceServers(): RTCIceServer[] {
   ];
 }
 
+/** 128-bit secret proving to the relay that this browser owns its peer id. */
+export function makePeerKey(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export class P2PRoom {
   private readonly opts: P2PRoomOptions;
+  private readonly key: string;
   private readonly peers = new Map<string, PeerSlot>();
   /** Per-remote-peer signal delivery chains (order-preserving). */
   private readonly signalQueues = new Map<string, Promise<void>>();
@@ -109,6 +124,7 @@ export class P2PRoom {
 
   constructor(opts: P2PRoomOptions) {
     this.opts = opts;
+    this.key = opts.key ?? makePeerKey();
   }
 
   /**
@@ -141,7 +157,7 @@ export class P2PRoom {
     void fetch("/api/rtc", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ op: "leave", room: this.opts.room, peer: this.opts.selfId }),
+      body: JSON.stringify({ op: "leave", room: this.opts.room, peer: this.opts.selfId, key: this.key }),
       keepalive: true,
     }).catch(() => {});
   }
@@ -192,8 +208,14 @@ export class P2PRoom {
       name: this.opts.name ?? "",
       since: String(this.cursor),
     });
-    const res = await fetch(`/api/rtc?${params}`);
+    const res = await fetch(`/api/rtc?${params}`, { headers: { "x-rtc-key": this.key } });
     if (this.closed) return;
+    if (res.status === 409 || res.status === 403) {
+      // Not transient: stop polling and tell the caller.
+      this.opts.onRejected?.(res.status === 409 ? "room_full" : "forbidden");
+      this.close();
+      return;
+    }
     if (!res.ok) throw new Error(`signaling poll failed: ${res.status}`);
     const body = (await res.json()) as RtcPollResponse;
     if (this.closed) return;
@@ -455,6 +477,7 @@ export class P2PRoom {
             op: "signal",
             room: this.opts.room,
             from: this.opts.selfId,
+            key: this.key,
             to,
             kind,
             payload,
