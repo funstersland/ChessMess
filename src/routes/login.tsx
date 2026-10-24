@@ -5,11 +5,16 @@ import { Button } from "@/components/ui/button";
 import { ChessMessMark } from "@/components/brand/ChessMessMark";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getSignInOptions } from "@/lib/server/auth-options";
 
-export const Route = createFileRoute("/login")({ component: Login });
+export const Route = createFileRoute("/login")({
+  loader: () => getSignInOptions().catch(() => ({ oauth: false })),
+  component: Login,
+});
 
 function Login() {
   const nav = useNavigate();
+  const { oauth } = Route.useLoaderData();
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -55,20 +60,24 @@ function Login() {
 
       {authEnabled ? (
         <>
-          <div className="space-y-2">
-            {GROK_PROVIDERS.map((p) => (
-              <Button
-                key={p.providerId}
-                type="button"
-                variant="secondary"
-                className="w-full"
-                onClick={() => signIn(p.providerId, { callbackURL: "/" })}
-              >
-                Continue with {p.label}
-              </Button>
-            ))}
-          </div>
-          <p className="text-center text-xs text-subtle">or with email</p>
+          {oauth && (
+            <>
+              <div className="space-y-2">
+                {GROK_PROVIDERS.map((p) => (
+                  <Button
+                    key={p.providerId}
+                    type="button"
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => signIn(p.providerId, { callbackURL: "/" })}
+                  >
+                    Continue with {p.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-center text-xs text-subtle">or with email</p>
+            </>
+          )}
           <form className="space-y-3" onSubmit={onEmail}>
             {mode === "up" && (
               <div className="space-y-1.5">

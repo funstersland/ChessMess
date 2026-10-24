@@ -1,10 +1,16 @@
 # ChessMess on Railway — replaces the previous Next.js deploy at chessmess.online.
-# Required service variables (Railway dashboard → Variables, available at build + deploy):
+# Required service variables (Railway dashboard → Variables, available at build + deploy).
+# `npm start` refuses to boot without the first two (scripts/require-env.mjs):
 #   DATABASE_URL          — Postgres connection string (Railway plugin)
 #   BETTER_AUTH_SECRET    — random 32+ char secret for session signing
 #   BETTER_AUTH_URL       — https://chessmess.online
 #   VITE_AUTH_ENABLED     — true
 #   HOST                  — 0.0.0.0
+# Fair Play stewards (admins). Sign in, open /admin, copy your account ID:
+#   ADMIN_USER_IDS        — comma-separated account IDs
+#   ADMIN_EMAILS          — optional; counts only for verified emails (e.g. Google sign-in)
+# Google / X sign-in (hidden on the login page until set):
+#   GROK_AUTH_CLIENT_ID, GROK_AUTH_CLIENT_SECRET, GROK_AUTH_ISSUER
 
 [build]
 builder = "NIXPACKS"

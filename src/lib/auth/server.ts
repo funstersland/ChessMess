@@ -198,9 +198,12 @@ export const auth = betterAuth({
         ...GROK_PROVIDERS.map((p) => p.providerId),
         GATE_PROVIDER_ID,
       ],
-      // X's synthetic email is never "verified", so don't gate linking on the
-      // local user's email-verified state.
-      requireLocalEmailVerified: false,
+      // Only link a provider into an existing account whose email is verified.
+      // Email/password sign-up does not verify addresses, so with this off a
+      // stranger could register someone's address first and then inherit
+      // their Google sign-in (account pre-hijacking). X's synthetic emails
+      // never match an existing local account, so X sign-in is unaffected.
+      requireLocalEmailVerified: true,
     },
   },
 
