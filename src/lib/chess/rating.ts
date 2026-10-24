@@ -22,7 +22,8 @@ export function nextRating(
 }
 
 export function classifyCpLoss(loss: number): import("./types").MoveClass {
-  const x = Math.abs(loss);
+  // A negative loss means the move beat the engine's earlier estimate.
+  const x = Math.max(0, loss);
   if (x < 20) return "great";
   if (x < 50) return "good";
   if (x < 100) return "inaccuracy";

@@ -64,62 +64,74 @@ export const VARIANTS: VariantInfo[] = [
   },
 ];
 
+/**
+ * Bot ladder. Skill/depth/time follow the shape of Lichess's Stockfish levels
+ * (skill 3/depth 1 is a casual beginner, skill 18/depth 10 is a strong club
+ * player), tuned so each rung is a step up from the last.
+ */
 export const BOTS: BotSpec[] = [
   {
     id: "beginner",
     name: "Beginner",
     blurb: "Learning the ropes. Misses tactics.",
     rating: 1200,
-    depth: 6,
-    movetimeMs: 250,
+    skill: 3,
+    depth: 1,
+    movetimeMs: 80,
   },
   {
     id: "strong",
     name: "Strong",
     blurb: "Sees one-move tactics. Still human.",
     rating: 1350,
-    depth: 8,
-    movetimeMs: 400,
+    skill: 5,
+    depth: 2,
+    movetimeMs: 120,
   },
   {
     id: "intermediate",
     name: "Intermediate",
     blurb: "Club-level. Punishes free material.",
     rating: 1500,
-    depth: 10,
-    movetimeMs: 600,
+    skill: 8,
+    depth: 3,
+    movetimeMs: 180,
   },
   {
     id: "strong-intermediate",
     name: "Strong Intermediate",
     blurb: "Solid. Knows openings and king safety.",
     rating: 1650,
-    depth: 12,
-    movetimeMs: 900,
+    skill: 10,
+    depth: 4,
+    movetimeMs: 220,
   },
   {
     id: "advanced",
     name: "Advanced",
     blurb: "Looks ahead. You need a plan.",
     rating: 1800,
-    depth: 14,
-    movetimeMs: 1200,
+    skill: 12,
+    depth: 5,
+    movetimeMs: 280,
   },
   {
     id: "strong-advanced",
     name: "Strong Advanced",
     blurb: "Deep search. Mistakes get crushed.",
     rating: 2000,
-    depth: 16,
-    movetimeMs: 1600,
+    skill: 15,
+    depth: 7,
+    movetimeMs: 380,
   },
   {
     id: "expert",
     name: "Expert",
     blurb: "Our strongest. Bring your theory.",
     rating: 2200,
-    depth: 18,
-    movetimeMs: 2200,
+    skill: 18,
+    depth: 10,
+    movetimeMs: 600,
   },
 ];
 

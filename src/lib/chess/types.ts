@@ -118,8 +118,13 @@ export interface BotSpec {
   id: BotId;
   name: string;
   blurb: string;
-  /** Ladder rating — also passed to Stockfish as UCI_Elo. */
+  /** Ladder rating used for scoring games against this bot. */
   rating: number;
+  /**
+   * Stockfish "Skill Level" (0–20). The bundled engine has no UCI_Elo, so
+   * strength comes from this plus the depth and time caps below.
+   */
+  skill: number;
   /** Search depth cap. */
   depth: number;
   /** Think time per move (ms). */

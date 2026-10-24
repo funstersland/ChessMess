@@ -178,6 +178,12 @@ export function PlayArena({
   const lastTick = useRef(0);
   const endedRef = useRef(false);
   const movesRef = useRef<PlayedMove[]>([]);
+  /**
+   * Bumped whenever the board is replaced (new game, rematch, leave, takeback).
+   * Async bot work captures it first and drops its result if it changed, so a
+   * late engine reply can never land in a different game or a rewound one.
+   */
+  const gameSeqRef = useRef(0);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -283,6 +289,7 @@ export function PlayArena({
 
   const applyTakeback = useCallback(
     (plies: number) => {
+      gameSeqRef.current += 1;
       const keep = movesRef.current.slice(0, Math.max(0, movesRef.current.length - plies));
       const pos = loadPosition(config.variant, startFenRef.current);
       for (const m of keep) playUci(pos, m.uci);
@@ -321,6 +328,8 @@ export function PlayArena({
     async (winner: Side | "draw", reason: string) => {
       if (endedRef.current) return;
       endedRef.current = true;
+      const seq = gameSeqRef.current;
+      const live = () => seq === gameSeqRef.current;
       setPhase("over");
       setShowResult(true);
       setResultNote(reason);
@@ -361,11 +370,11 @@ export function PlayArena({
           movesRef.current.map((m) => m.uci),
         );
         analyzed = res.items;
-        setAnalysis(res.items);
+        if (live()) setAnalysis(res.items);
       } catch {
-        setAnalysis([]);
+        if (live()) setAnalysis([]);
       } finally {
-        setAnalyzing(false);
+        if (live()) setAnalyzing(false);
       }
 
       if (isBotMatch) {
@@ -373,7 +382,7 @@ export function PlayArena({
         const score = draw ? 0.5 : youWin ? 1 : 0;
         const games = g.wins + g.draws + g.losses;
         const { next, delta } = nextRating(g.rating, bot.rating, score, games);
-        setRatingDelta(delta);
+        if (live()) setRatingDelta(delta);
         const updated = {
           rating: next,
           wins: g.wins + (youWin ? 1 : 0),
@@ -434,7 +443,10 @@ export function PlayArena({
 
       if (config.opponent !== "local" && ucis.length >= 8) {
         const claimed = guestStats().rating;
-        setFpNote("Fair Play: starting Stockfish…");
+        const note = (text: string | null) => {
+          if (live()) setFpNote(text);
+        };
+        note("Fair Play: starting Stockfish…");
         void scanGame(
           {
             fenStart: startFenRef.current,
@@ -445,10 +457,10 @@ export function PlayArena({
             opponent: oppName,
             pgn,
           },
-          (p) => setFpNote(p.message),
+          (p) => note(p.message),
         )
           .then(async (scanned) => {
-            setFpReport(scanned);
+            if (live()) setFpReport(scanned);
             if (user) {
               const res = await submitFairPlayScan({
                 data: {
@@ -467,19 +479,19 @@ export function PlayArena({
                 },
               });
               if (res.caseId) {
-                setFpNote(
+                note(
                   `Fair Play flagged you (risk ${res.risk}). Sent to the steward — they approve any suspension.`,
                 );
                 toast.error("Fair Play flagged this game");
                 setAccountStatus("flagged");
               } else {
-                setFpNote(`Fair Play: ${verdictLabel(res.verdict)} · risk ${res.risk}`);
+                note(`Fair Play: ${verdictLabel(res.verdict)} · risk ${res.risk}`);
               }
             } else {
-              setFpNote(`Fair Play: ${verdictLabel(scanned.verdict)} · risk ${scanned.risk}`);
+              note(`Fair Play: ${verdictLabel(scanned.verdict)} · risk ${scanned.risk}`);
             }
           })
-          .catch(() => setFpNote(null));
+          .catch(() => note(null));
 
         if (config.opponent === "online" && user) {
           const oppColor = playerColor === "white" ? "black" : "white";
@@ -549,15 +561,20 @@ export function PlayArena({
   );
 
   const requestBot = useCallback(async () => {
+    const seq = gameSeqRef.current;
+    const stale = () => seq !== gameSeqRef.current || phaseRef.current === "over";
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (stale()) return;
       if (posRef.current.turn === colorRef.current) return;
       setPhase("bot");
       const thinkStart = performance.now();
       try {
         const pos = posRef.current;
-        const res = await botClient.move(fenOf(pos), config.variant, config.bot);
+        const fen = fenOf(pos);
+        const res = await botClient.move(fen, config.variant, config.bot);
         await botThinkDelay(performance.now() - thinkStart);
-        if (phaseRef.current === "over") return;
+        // Drop the reply if the game was replaced or the board moved on.
+        if (stale() || pos !== posRef.current || fenOf(pos) !== fen) return;
         const before = clonePos(pos);
         const played = playUci(pos, res.uci);
         if (!played) continue;
@@ -597,12 +614,14 @@ export function PlayArena({
         refresh(pos);
         const board = activeBoardStyle(settings.theme, settings.boardStyle, settings.lockThemeAssets);
         await waitAfterBotMove(settings.animations, !!played.captured, board);
+        if (seq !== gameSeqRef.current) return;
         if (!applyOutcome(pos)) setPhase("player");
         return;
       } catch {
         /* retry with a fresh engine boot */
       }
     }
+    if (stale()) return;
     toast.error("The bot stalled. Try takeback or start a new game.");
     if (posRef.current.turn === colorRef.current) setPhase("player");
     else setPhase("bot");
@@ -677,6 +696,7 @@ export function PlayArena({
         return;
       }
       if (isBotOpponent && pos.turn !== colorRef.current) {
+        const seq = gameSeqRef.current;
         void (async () => {
           const board = activeBoardStyle(
             settings.theme,
@@ -684,7 +704,11 @@ export function PlayArena({
             settings.lockThemeAssets,
           );
           await waitBeforeBotTurn(settings.animations, !!played.captured, board);
-          if (phaseRef.current !== "over" && posRef.current.turn !== colorRef.current) {
+          if (
+            seq === gameSeqRef.current &&
+            phaseRef.current !== "over" &&
+            posRef.current.turn !== colorRef.current
+          ) {
             void requestBot();
           }
         })();
@@ -761,6 +785,7 @@ export function PlayArena({
       }
 
       if (!opts?.remote && isBotOpponent && pos.turn !== colorRef.current) {
+        const seq = gameSeqRef.current;
         void (async () => {
           const board = activeBoardStyle(
             settings.theme,
@@ -768,7 +793,11 @@ export function PlayArena({
             settings.lockThemeAssets,
           );
           await waitBeforeBotTurn(settings.animations, false, board);
-          if (phaseRef.current !== "over" && posRef.current.turn !== colorRef.current) {
+          if (
+            seq === gameSeqRef.current &&
+            phaseRef.current !== "over" &&
+            posRef.current.turn !== colorRef.current
+          ) {
             void requestBot();
           }
         })();
@@ -911,6 +940,7 @@ export function PlayArena({
       return;
     }
     unlockAudio();
+    gameSeqRef.current += 1;
     endedRef.current = false;
     const color: Side =
       config.color === "random" ? (Math.random() < 0.5 ? "white" : "black") : config.color;
@@ -1391,7 +1421,7 @@ export function PlayArena({
             Show result
           </Button>
         )}
-        <Button variant="ghost" className="w-full" onClick={() => { stopSpeaking(); onExit?.(); setStarted(false); setPhase("idle"); }}>
+        <Button variant="ghost" className="w-full" onClick={() => { gameSeqRef.current += 1; stopSpeaking(); onExit?.(); setStarted(false); setPhase("idle"); }}>
           Leave board
         </Button>
       </aside>
@@ -1497,6 +1527,7 @@ export function PlayArena({
               <Button
                 variant="ghost"
                 onClick={() => {
+                  gameSeqRef.current += 1;
                   setStarted(false);
                   setPhase("idle");
                   onExit?.();

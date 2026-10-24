@@ -1,2 +1,2 @@
-export { getStockfish, StockfishClient, engineClient, botUciElo } from "@/lib/chess/stockfish";
-export type { EnginePv, SearchOpts } from "@/lib/chess/stockfish";
+export { getStockfish, StockfishClient, engineClient } from "@/lib/chess/stockfish";
+export type { EnginePv, SearchOpts, SearchResult } from "@/lib/chess/stockfish";
